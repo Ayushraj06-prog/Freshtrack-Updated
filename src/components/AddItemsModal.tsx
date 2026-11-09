@@ -129,6 +129,76 @@ const SAMPLE_PRODUCT_PHOTOS = [
   },
 ];
 
+/**
+ * Resizes and compresses image files or data URLs to ensure optimal dimensions
+ * for Gemini Vision OCR (<200KB payload, fast upload, no network timeouts).
+ */
+function compressImage(
+  source: File | Blob | string,
+  maxDimension = 1200,
+  quality = 0.85
+): Promise<{ base64: string; mimeType: string }> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+
+    const finalize = (imageElement: HTMLImageElement) => {
+      let width = imageElement.naturalWidth || imageElement.width || 800;
+      let height = imageElement.naturalHeight || imageElement.height || 600;
+
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width);
+          width = maxDimension;
+        } else {
+          width = Math.round((width * maxDimension) / height);
+          height = maxDimension;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve({
+          base64: typeof source === 'string' ? source : '',
+          mimeType: 'image/jpeg',
+        });
+        return;
+      }
+      ctx.drawImage(imageElement, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL('image/jpeg', quality);
+      resolve({ base64: dataUrl, mimeType: 'image/jpeg' });
+    };
+
+    img.onload = () => finalize(img);
+    img.onerror = () => {
+      if (typeof source === 'string') {
+        resolve({ base64: source, mimeType: 'image/jpeg' });
+      } else {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ base64: reader.result as string, mimeType: 'image/jpeg' });
+        reader.onerror = () => resolve({ base64: '', mimeType: 'image/jpeg' });
+        reader.readAsDataURL(source);
+      }
+    };
+
+    if (typeof source === 'string') {
+      img.src = source;
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => {
+        img.src = reader.result as string;
+      };
+      reader.onerror = () => {
+        resolve({ base64: '', mimeType: 'image/jpeg' });
+      };
+      reader.readAsDataURL(source);
+    }
+  });
+}
+
 export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose }) => {
   const { addItem, addMultipleItems } = useInventory();
 
@@ -205,34 +275,44 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
     setCameraActive(false);
   };
 
-  // Capture frame from camera stream and send to OCR
+  // Capture frame from camera stream, compress to optimal size, and send to OCR
   const captureCameraPhoto = async () => {
     if (!videoRef.current) return;
     const video = videoRef.current;
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
+    const width = Math.min(1280, video.videoWidth || 640);
+    const height = Math.min(720, video.videoHeight || 480);
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, width, height);
     const base64 = canvas.toDataURL('image/jpeg', 0.85);
     stopCamera();
     await handleScanProductPhoto(base64, 'image/jpeg');
   };
 
-  // Handle photo file uploaded from user disk
-  const handleProductPhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle photo file uploaded from user disk with auto-compression
+  const handleProductPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64 = reader.result as string;
-      await handleScanProductPhoto(base64, file.type || 'image/jpeg');
-    };
-    reader.readAsDataURL(file);
+    setPhotoOcrLoading(true);
+    setOcrError('');
+
+    try {
+      const compressed = await compressImage(file, 1200, 0.85);
+      await handleScanProductPhoto(compressed.base64, compressed.mimeType);
+    } catch (err: any) {
+      console.warn('Image compression fallback:', err);
+      const reader = new FileReader();
+      reader.onload = async () => {
+        await handleScanProductPhoto(reader.result as string, file.type || 'image/jpeg');
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
-  // Process photo with Gemini 2.5 Flash OCR Vision
+  // Process photo with Gemini Vision OCR
   const handleScanProductPhoto = async (base64: string, mimeType: string, presetItem?: any) => {
     setPhotoOcrLoading(true);
     setOcrError('');
@@ -244,14 +324,14 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
         const expiry = p.expiryDate || calculateExpiryDate(p.estimatedExpiryDays || 7);
         setScannedProduct({
           name: p.name,
-          brand: p.brand || '',
-          category: p.category || 'Dairy',
-          quantity: p.quantity || 1,
-          unit: p.unit || 'pack',
+          brand: p.brand || (presetItem?.brand ?? ''),
+          category: p.category || (presetItem?.category ?? 'Dairy'),
+          quantity: p.quantity || (presetItem?.quantity ?? 1),
+          unit: p.unit || (presetItem?.unit ?? 'pack'),
           price: p.price ?? (presetItem?.price ?? null),
           barcode: p.barcode || (presetItem?.barcode ?? null),
-          storage: p.storage || 'fridge',
-          estimatedExpiryDays: p.estimatedExpiryDays || 7,
+          storage: p.storage || (presetItem?.storage ?? 'fridge'),
+          estimatedExpiryDays: p.estimatedExpiryDays || (presetItem?.estimatedExpiryDays ?? 7),
           expiryDate: expiry,
           detectedText: p.detectedText || null,
           imageUrl: base64,
@@ -289,21 +369,23 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
     });
   };
 
-  // Convert image URL to Base64 to test sample presets
+  // Convert image URL to Base64 to test sample presets with instant prefill
   const handleSelectSamplePreset = async (preset: typeof SAMPLE_PRODUCT_PHOTOS[0]) => {
     setPhotoOcrLoading(true);
     setOcrError('');
+    // Instant prefill so the user immediately sees the populated product card
+    applyPresetFallback(preset, preset.imageUrl);
+
     try {
       const res = await fetch(preset.imageUrl);
-      const blob = await res.blob();
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = reader.result as string;
-        await handleScanProductPhoto(base64, blob.type || 'image/jpeg', preset);
-      };
-      reader.readAsDataURL(blob);
+      if (res.ok) {
+        const blob = await res.blob();
+        const compressed = await compressImage(blob, 1000, 0.85);
+        await handleScanProductPhoto(compressed.base64, compressed.mimeType, preset);
+      }
     } catch {
-      applyPresetFallback(preset, preset.imageUrl);
+      // Preset is already active!
+    } finally {
       setPhotoOcrLoading(false);
     }
   };
@@ -389,32 +471,28 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
     }
   };
 
-  const handleReceiptImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleReceiptImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64 = reader.result as string;
-      setParsingAi(true);
-      try {
-        const result = await aiService.parseReceipt({
-          imageBase64: base64,
-          mimeType: file.type || 'image/jpeg',
-        });
-        setParsedReviewItems(result.items);
-        setShowReviewScreen(true);
-      } catch {
-        const sample = SAMPLE_INDIAN_RECEIPTS[0];
-        setReceiptText(sample.text);
-        const parsed = ReceiptParser.parse(sample.text);
-        setParsedReviewItems(parsed.items);
-        setShowReviewScreen(true);
-      } finally {
-        setParsingAi(false);
-      }
-    };
-    reader.readAsDataURL(file);
+    setParsingAi(true);
+    try {
+      const compressed = await compressImage(file, 1200, 0.85);
+      const result = await aiService.parseReceipt({
+        imageBase64: compressed.base64,
+        mimeType: compressed.mimeType,
+      });
+      setParsedReviewItems(result.items);
+      setShowReviewScreen(true);
+    } catch {
+      const sample = SAMPLE_INDIAN_RECEIPTS[0];
+      setReceiptText(sample.text);
+      const parsed = ReceiptParser.parse(sample.text);
+      setParsedReviewItems(parsed.items);
+      setShowReviewScreen(true);
+    } finally {
+      setParsingAi(false);
+    }
   };
 
   const handleSaveAllReceiptItems = async () => {
@@ -663,7 +741,7 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                   <div className="flex items-center justify-between pb-2 border-b border-stone-200">
                     <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1">
                       <Sparkles className="w-3 h-3" />
-                      {scannedProduct.source === 'gemini' ? 'Gemini 2.5 Flash Vision OCR' : 'Local OCR Scanner'}
+                      {scannedProduct.source === 'gemini' ? 'Gemini Vision OCR' : 'Local OCR Scanner'}
                     </span>
                     <button
                       onClick={() => setScannedProduct(null)}
