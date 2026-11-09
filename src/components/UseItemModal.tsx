@@ -19,6 +19,7 @@ import {
   Package,
   Layers,
   UtensilsCrossed,
+  ChefHat,
 } from 'lucide-react';
 import { InventoryItem, UseItemPayload } from '../types/inventory';
 
@@ -26,11 +27,17 @@ interface UseItemModalProps {
   item: InventoryItem | null;
   onClose: () => void;
   onConfirm: (id: string, options: UseItemPayload) => void;
+  onOpenCustomRecipe?: (itemId: string) => void;
 }
 
 type PortionPresetMode = '25' | '50' | '75' | '100' | 'custom';
 
-export const UseItemModal: React.FC<UseItemModalProps> = ({ item, onClose, onConfirm }) => {
+export const UseItemModal: React.FC<UseItemModalProps> = ({
+  item,
+  onClose,
+  onConfirm,
+  onOpenCustomRecipe,
+}) => {
   if (!item) return null;
 
   const currentQty = Number(item.quantity) || 1;
@@ -368,6 +375,26 @@ export const UseItemModal: React.FC<UseItemModalProps> = ({ item, onClose, onCon
               className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-200 rounded-2xl text-xs sm:text-sm focus:ring-2 focus:ring-[#2C5F2D] focus:outline-none"
             />
           </div>
+
+          {/* Shortcut to Custom Multi-Item Recipe Builder */}
+          {onOpenCustomRecipe && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenCustomRecipe(item.id);
+              }}
+              className="w-full p-3 rounded-2xl bg-[#EAF3E6] hover:bg-[#d8edd1] border border-[#6B9B4F]/40 text-[#2C5F2D] text-xs font-extrabold flex items-center justify-between transition-all cursor-pointer group"
+            >
+              <div className="flex items-center gap-2">
+                <ChefHat className="w-4 h-4 text-[#2C5F2D]" />
+                <span className="text-left">Cooking a multi-item recipe with this?</span>
+              </div>
+              <span className="text-[11px] underline group-hover:no-underline font-black">
+                Open Recipe Builder &rarr;
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Footer Actions */}

@@ -12,10 +12,12 @@ import {
   InventoryStats,
   DbInfo,
   UseItemPayload,
+  CustomRecipe,
 } from '../types/inventory';
 
 interface InventoryContextType {
   items: InventoryItem[];
+  customRecipes: CustomRecipe[];
   preferences: UserPreferences;
   dbInfo: DbInfo | null;
   dbConnected: boolean;
@@ -27,6 +29,12 @@ interface InventoryContextType {
   markAsUsed: (id: string, options?: UseItemPayload) => Promise<void>;
   markMultipleAsUsed: (ids: string[]) => Promise<void>;
   markAsExpired: (id: string) => Promise<void>;
+  saveCustomRecipe: (recipe: Partial<CustomRecipe>) => Promise<CustomRecipe>;
+  deleteCustomRecipe: (id: string) => Promise<void>;
+  cookCustomRecipe: (
+    id: string,
+    deductions: { itemId: string; portion?: number; usedQuantity?: number; usedPortionName?: string }[]
+  ) => Promise<void>;
   updatePreferences: (updates: Partial<UserPreferences>) => Promise<void>;
   seedDemoData: () => Promise<void>;
   clearAllData: () => Promise<void>;
@@ -47,6 +55,7 @@ const InventoryContext = createContext<InventoryContextType | undefined>(undefin
 
 export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [customRecipes, setCustomRecipes] = useState<CustomRecipe[]>([]);
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFS);
   const [dbInfo, setDbInfo] = useState<DbInfo | null>(null);
   const [dbConnected, setDbConnected] = useState<boolean>(false);
@@ -57,14 +66,16 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Load state from backend SQLite database on mount
   const refreshBackendData = async () => {
     try {
-      const [backendItems, backendPrefs, info] = await Promise.all([
+      const [backendItems, backendPrefs, info, customRecs] = await Promise.all([
         api.fetchItems(),
         api.fetchPreferences(),
         api.getDbInfo(),
+        api.fetchCustomRecipes().catch(() => []),
       ]);
       setItems(backendItems);
       if (backendPrefs) setPreferences(backendPrefs);
       setDbInfo(info);
+      setCustomRecipes(customRecs || []);
       setDbConnected(true);
     } catch (err) {
       console.warn('Backend DB initial sync retry:', err);
@@ -258,6 +269,60 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
+  const saveCustomRecipe = async (recipeData: Partial<CustomRecipe>): Promise<CustomRecipe> => {
+    try {
+      const saved = await api.saveCustomRecipe(recipeData);
+      setCustomRecipes((prev) => {
+        const idx = prev.findIndex((r) => r.id === saved.id);
+        if (idx !== -1) {
+          return prev.map((r) => (r.id === saved.id ? saved : r));
+        }
+        return [saved, ...prev];
+      });
+      return saved;
+    } catch (err) {
+      console.error('Failed to save custom recipe:', err);
+      throw err;
+    }
+  };
+
+  const deleteCustomRecipe = async (id: string) => {
+    setCustomRecipes((prev) => prev.filter((r) => r.id !== id));
+    try {
+      await api.deleteCustomRecipe(id);
+    } catch (err) {
+      console.error('Failed to delete custom recipe:', err);
+    }
+  };
+
+  const cookCustomRecipe = async (
+    id: string,
+    deductions: { itemId: string; portion?: number; usedQuantity?: number; usedPortionName?: string }[]
+  ) => {
+    try {
+      const res = await api.cookCustomRecipe(id, deductions);
+      if (res && res.updatedItems) {
+        setItems((prev) => {
+          const map = new Map(res.updatedItems.map((u: InventoryItem) => [u.id, u]));
+          return prev.map((i) => map.get(i.id) || i);
+        });
+      }
+      if (res && res.recipe) {
+        setCustomRecipes((prev) => prev.map((r) => (r.id === id ? res.recipe : r)));
+      }
+      api.getDbInfo().then(setDbInfo).catch(() => {});
+    } catch (err) {
+      console.error('Failed to log custom recipe cooking:', err);
+      for (const d of deductions) {
+        await markAsUsed(d.itemId, {
+          portion: d.portion,
+          usedQuantity: d.usedQuantity,
+          usedPortionName: d.usedPortionName,
+        });
+      }
+    }
+  };
+
   const updatePreferences = async (updates: Partial<UserPreferences>) => {
     setPreferences((prev) => ({ ...prev, ...updates }));
     try {
@@ -404,6 +469,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     <InventoryContext.Provider
       value={{
         items,
+        customRecipes,
         preferences,
         dbInfo,
         dbConnected,
@@ -415,6 +481,9 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         markAsUsed,
         markMultipleAsUsed,
         markAsExpired,
+        saveCustomRecipe,
+        deleteCustomRecipe,
+        cookCustomRecipe,
         updatePreferences,
         seedDemoData,
         clearAllData,

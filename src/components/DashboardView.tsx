@@ -236,6 +236,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
           item={usingItem}
           onClose={() => setUsingItem(null)}
           onConfirm={(id, options) => markAsUsed(id, options)}
+          onOpenCustomRecipe={() => {
+            setUsingItem(null);
+            setActiveTab('recipes');
+          }}
         />
       )}
     </div>

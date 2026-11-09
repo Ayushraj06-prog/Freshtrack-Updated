@@ -238,3 +238,42 @@ apiRouter.post('/ai/scan-product', async (req, res) => {
   }
 });
 
+// 7. Custom Customer Recipes (Saved Recipes & Multi-Item Cooking)
+apiRouter.get('/recipes/custom', (req, res) => {
+  try {
+    const recipes = db.getAllCustomRecipes();
+    res.json({ success: true, count: recipes.length, recipes });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/recipes/custom', (req, res) => {
+  try {
+    const recipe = db.saveCustomRecipe(req.body);
+    res.status(201).json({ success: true, recipe });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/recipes/custom/:id', (req, res) => {
+  try {
+    db.deleteCustomRecipe(req.params.id);
+    res.json({ success: true, deletedId: req.params.id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/recipes/custom/:id/cook', (req, res) => {
+  try {
+    const deductions = req.body.deductions || [];
+    const result = db.cookCustomRecipe(req.params.id, deductions);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+

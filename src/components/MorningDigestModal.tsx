@@ -136,6 +136,11 @@ export const MorningDigestModal: React.FC<MorningDigestModalProps> = ({
           item={usingItem}
           onClose={() => setUsingItem(null)}
           onConfirm={(id, options) => markAsUsed(id, options)}
+          onOpenCustomRecipe={() => {
+            setUsingItem(null);
+            onClose();
+            setActiveTab('recipes');
+          }}
         />
       )}
     </div>

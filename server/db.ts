@@ -74,6 +74,25 @@ sqliteDb.exec(`
     details TEXT,
     timestamp TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS custom_recipes (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT,
+    image TEXT,
+    timeMinutes INTEGER,
+    servings INTEGER,
+    difficulty TEXT,
+    diet TEXT,
+    cuisine TEXT,
+    ingredients TEXT,
+    instructions TEXT,
+    notes TEXT,
+    cookedCount INTEGER DEFAULT 0,
+    lastCookedAt TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  );
 `);
 
 // Seed default data if empty
@@ -308,6 +327,52 @@ export function seedKitchenData() {
     INSERT OR REPLACE INTO preferences (id, diet, reminderLeadDays, morningDigestEnabled, morningDigestTime, defaultStorage, updatedAt)
     VALUES ('default', 'veg', 2, 1, '08:30', 'fridge', ?)
   `).run(now);
+
+  // Seed sample custom recipe if none exists
+  try {
+    const customCountStmt = sqliteDb.prepare('SELECT COUNT(*) as count FROM custom_recipes');
+    const customCount = (customCountStmt.get() as { count: number }).count;
+    if (customCount === 0) {
+      sqliteDb.prepare(`
+        INSERT OR REPLACE INTO custom_recipes (
+          id, title, description, image, timeMinutes, servings, difficulty, diet, cuisine,
+          ingredients, instructions, notes, cookedCount, lastCookedAt, createdAt, updatedAt
+        ) VALUES (
+          @id, @title, @description, @image, @timeMinutes, @servings, @difficulty, @diet, @cuisine,
+          @ingredients, @instructions, @notes, @cookedCount, @lastCookedAt, @createdAt, @updatedAt
+        )
+      `).run({
+        id: 'seed-custom-1',
+        title: 'Homestyle Dahi Tadka Toast',
+        description: 'Crispy pan-toasted bread layered with spiced, tempered curd and fresh coriander garnish.',
+        image: 'https://images.unsplash.com/photo-1525351484163-7529414344d8?w=500&q=80',
+        timeMinutes: 12,
+        servings: 2,
+        difficulty: 'Quick',
+        diet: 'veg',
+        cuisine: 'North Indian',
+        ingredients: JSON.stringify([
+          { itemId: 'seed-1', name: 'Mother Dairy Classic Dahi 400g', portionUsed: 0.25, amountText: '100g' },
+          { itemId: 'seed-4', name: 'Britannia 100% Whole Wheat Bread', portionUsed: 0.5, amountText: '2 slices' },
+          { itemId: 'seed-2', name: 'Fresh Coriander (Dhaniya)', portionUsed: 0.25, amountText: 'Handful' },
+          { name: 'Mustard Seeds & Curry Leaves', isPantryStaple: true, amountText: '1/2 tsp' },
+        ]),
+        instructions: JSON.stringify([
+          'Whisk thick curd with salt, crushed roasted cumin, and black pepper.',
+          'Heat ghee or mustard oil in a small tadka pan; sputter mustard seeds and curry leaves.',
+          'Toast bread slices on a tawa until golden and crisp.',
+          'Spread the seasoned curd over warm toast, pour hot aromatic tadka on top, garnish with coriander, and enjoy immediately!',
+        ]),
+        notes: 'Family favorite quick evening snack using leftover bread and dahi!',
+        cookedCount: 1,
+        lastCookedAt: formatDateOffset(-1),
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  } catch (err) {
+    console.warn('Seeding custom recipes deferred:', err);
+  }
 }
 
 // ---------------- SQLite Public Interface ----------------
@@ -621,7 +686,126 @@ export const db = {
       totalScansLogged,
     };
   },
+
+  // Custom User Recipes
+  getAllCustomRecipes() {
+    const stmt = sqliteDb.prepare('SELECT * FROM custom_recipes ORDER BY createdAt DESC');
+    return (stmt.all() as any[]).map(mapCustomRecipe);
+  },
+
+  getCustomRecipeById(id: string) {
+    const stmt = sqliteDb.prepare('SELECT * FROM custom_recipes WHERE id = ?');
+    const row = stmt.get(id);
+    return row ? mapCustomRecipe(row) : null;
+  },
+
+  saveCustomRecipe(recipe: any) {
+    const nowIso = new Date().toISOString();
+    const prepared = {
+      id: recipe.id || `custom-recipe-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      title: recipe.title || 'My Custom Dish',
+      description: recipe.description ?? '',
+      image: recipe.image ?? 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=500&q=80',
+      timeMinutes: Number(recipe.timeMinutes) || 15,
+      servings: Number(recipe.servings) || 2,
+      difficulty: recipe.difficulty ?? 'Easy',
+      diet: recipe.diet ?? 'veg',
+      cuisine: recipe.cuisine ?? 'Homestyle',
+      ingredients: typeof recipe.ingredients === 'string' ? recipe.ingredients : JSON.stringify(recipe.ingredients || []),
+      instructions: typeof recipe.instructions === 'string' ? recipe.instructions : JSON.stringify(recipe.instructions || []),
+      notes: recipe.notes ?? null,
+      cookedCount: Number(recipe.cookedCount) || 0,
+      lastCookedAt: recipe.lastCookedAt ?? null,
+      createdAt: recipe.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    const stmt = sqliteDb.prepare(`
+      INSERT OR REPLACE INTO custom_recipes (
+        id, title, description, image, timeMinutes, servings, difficulty, diet, cuisine,
+        ingredients, instructions, notes, cookedCount, lastCookedAt, createdAt, updatedAt
+      ) VALUES (
+        @id, @title, @description, @image, @timeMinutes, @servings, @difficulty, @diet, @cuisine,
+        @ingredients, @instructions, @notes, @cookedCount, @lastCookedAt, @createdAt, @updatedAt
+      )
+    `);
+    stmt.run(prepared);
+    return mapCustomRecipe(prepared);
+  },
+
+  deleteCustomRecipe(id: string) {
+    const stmt = sqliteDb.prepare('DELETE FROM custom_recipes WHERE id = ?');
+    stmt.run(id);
+    return true;
+  },
+
+  cookCustomRecipe(
+    recipeId: string,
+    deductions: { itemId: string; portion?: number; usedQuantity?: number; usedPortionName?: string }[]
+  ) {
+    const recipe = this.getCustomRecipeById(recipeId);
+    const updatedItems: any[] = [];
+    const recipeTitle = recipe?.title || 'Custom Recipe';
+
+    for (const d of deductions) {
+      if (!d.itemId) continue;
+      const portionName = d.usedPortionName || `Used for "${recipeTitle}"`;
+      const updated = this.markItemUsed(d.itemId, {
+        portion: d.portion,
+        usedQuantity: d.usedQuantity,
+        usedPortionName: portionName,
+      });
+      if (updated) updatedItems.push(updated);
+    }
+
+    if (recipe) {
+      const nowIso = new Date().toISOString();
+      const nextCount = (recipe.cookedCount || 0) + 1;
+      sqliteDb
+        .prepare('UPDATE custom_recipes SET cookedCount = ?, lastCookedAt = ?, updatedAt = ? WHERE id = ?')
+        .run(nextCount, nowIso, nowIso, recipeId);
+      recipe.cookedCount = nextCount;
+      recipe.lastCookedAt = nowIso;
+    }
+
+    return {
+      recipe,
+      updatedItems,
+    };
+  },
 };
+
+function mapCustomRecipe(row: any) {
+  let ingredients = [];
+  try {
+    ingredients = typeof row.ingredients === 'string' ? JSON.parse(row.ingredients) : row.ingredients || [];
+  } catch {}
+
+  let instructions = [];
+  try {
+    instructions = typeof row.instructions === 'string' ? JSON.parse(row.instructions) : row.instructions || [];
+  } catch {}
+
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description || '',
+    image: row.image || 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=500&q=80',
+    timeMinutes: Number(row.timeMinutes) || 15,
+    servings: Number(row.servings) || 2,
+    difficulty: row.difficulty || 'Easy',
+    diet: row.diet || 'veg',
+    cuisine: row.cuisine || 'Homestyle',
+    ingredients,
+    instructions,
+    notes: row.notes || undefined,
+    cookedCount: Number(row.cookedCount) || 0,
+    lastCookedAt: row.lastCookedAt || undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    source: 'custom' as const,
+  };
+}
 
 function mapItem(row: any) {
   return {

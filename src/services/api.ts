@@ -6,7 +6,7 @@
  * Typed client for interacting with the backend SQLite database.
  */
 
-import { InventoryItem, UserPreferences, InventoryStats, DbInfo } from '../types/inventory';
+import { InventoryItem, UserPreferences, InventoryStats, DbInfo, CustomRecipe } from '../types/inventory';
 
 export const api = {
   async getDbInfo(): Promise<DbInfo> {
@@ -134,4 +134,45 @@ export const api = {
     const data = await res.json();
     return data.stats;
   },
+
+  // Custom User Recipes
+  async fetchCustomRecipes(): Promise<CustomRecipe[]> {
+    const res = await fetch('/api/recipes/custom');
+    if (!res.ok) throw new Error(`Failed to fetch custom recipes: ${res.status}`);
+    const data = await res.json();
+    return data.recipes || [];
+  },
+
+  async saveCustomRecipe(recipe: Partial<CustomRecipe>): Promise<CustomRecipe> {
+    const res = await fetch('/api/recipes/custom', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(recipe),
+    });
+    if (!res.ok) throw new Error(`Failed to save custom recipe: ${res.status}`);
+    const data = await res.json();
+    return data.recipe;
+  },
+
+  async deleteCustomRecipe(id: string): Promise<boolean> {
+    const res = await fetch(`/api/recipes/custom/${id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(`Failed to delete custom recipe: ${res.status}`);
+    return true;
+  },
+
+  async cookCustomRecipe(
+    id: string,
+    deductions: { itemId: string; portion?: number; usedQuantity?: number; usedPortionName?: string }[]
+  ): Promise<{ recipe: CustomRecipe; updatedItems: InventoryItem[] }> {
+    const res = await fetch(`/api/recipes/custom/${id}/cook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deductions }),
+    });
+    if (!res.ok) throw new Error(`Failed to log cooking of custom recipe: ${res.status}`);
+    return await res.json();
+  },
 };
+

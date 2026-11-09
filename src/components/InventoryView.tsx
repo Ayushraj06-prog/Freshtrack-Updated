@@ -21,6 +21,7 @@ import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays, SHELF_LIFE_DATABASE } from '../data/shelfLifeData';
 import { InventoryItem, ItemCategory, StorageLocation } from '../types/inventory';
 import { UseItemModal } from './UseItemModal';
+import { CustomRecipeModal } from './CustomRecipeModal';
 
 interface InventoryViewProps {
   onOpenAddModal: () => void;
@@ -37,6 +38,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, se
 
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [usingItem, setUsingItem] = useState<InventoryItem | null>(null);
+  const [isCustomRecipeOpen, setIsCustomRecipeOpen] = useState(false);
+  const [customRecipeItemId, setCustomRecipeItemId] = useState<string | null>(null);
 
   // Filter items
   const filteredItems = useMemo(() => {
@@ -93,13 +96,26 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, se
           )}
         </div>
 
-        <button
-          onClick={onOpenAddModal}
-          className="px-4 py-2.5 bg-[#2C5F2D] hover:bg-[#204721] text-white text-xs font-bold rounded-2xl shadow-md shadow-[#2C5F2D]/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer shrink-0"
-        >
-          <PlusCircle className="w-4 h-4" />
-          <span>Add Kitchen Items</span>
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => {
+              setCustomRecipeItemId(null);
+              setIsCustomRecipeOpen(true);
+            }}
+            className="px-3.5 py-2.5 bg-[#EAF3E6] hover:bg-[#d8edd1] text-[#2C5F2D] border border-[#6B9B4F]/40 text-xs font-bold rounded-2xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <UtensilsCrossed className="w-4 h-4 text-[#2C5F2D]" />
+            <span>Cook My Own Recipe</span>
+          </button>
+
+          <button
+            onClick={onOpenAddModal}
+            className="px-4 py-2.5 bg-[#2C5F2D] hover:bg-[#204721] text-white text-xs font-bold rounded-2xl shadow-md shadow-[#2C5F2D]/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>Add Kitchen Items</span>
+          </button>
+        </div>
       </div>
 
       {/* Storage Filter Pills */}
@@ -452,8 +468,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, se
           item={usingItem}
           onClose={() => setUsingItem(null)}
           onConfirm={(id, options) => markAsUsed(id, options)}
+          onOpenCustomRecipe={(itemId) => {
+            setUsingItem(null);
+            setCustomRecipeItemId(itemId);
+            setIsCustomRecipeOpen(true);
+          }}
         />
       )}
+
+      {/* Standalone Custom Recipe Creator Modal */}
+      <CustomRecipeModal
+        isOpen={isCustomRecipeOpen}
+        onClose={() => {
+          setIsCustomRecipeOpen(false);
+          setCustomRecipeItemId(null);
+        }}
+        initialSelectedItemId={customRecipeItemId}
+      />
     </div>
   );
 };

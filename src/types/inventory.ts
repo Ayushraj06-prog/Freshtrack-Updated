@@ -60,6 +60,36 @@ export interface RecipeIngredient {
   amount: string;
 }
 
+export interface CustomRecipeIngredient {
+  itemId?: string; // ID of inventory item if chosen from pantry
+  name: string;
+  portionUsed?: number; // 0.25, 0.5, 0.75, 1.0
+  quantityUsed?: number; // exact amount deducted
+  unit?: string;
+  amountText?: string;
+  isPantryStaple?: boolean; // spices, salt, oil, etc.
+}
+
+export interface CustomRecipe {
+  id: string;
+  title: string;
+  description: string;
+  image?: string;
+  timeMinutes: number;
+  servings: number;
+  difficulty: 'Quick' | 'Easy' | 'Medium';
+  diet: DietType;
+  cuisine: string;
+  ingredients: CustomRecipeIngredient[];
+  instructions: string[];
+  notes?: string;
+  cookedCount?: number;
+  lastCookedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  source: 'custom';
+}
+
 export interface Recipe {
   id: string;
   title: string;
@@ -73,7 +103,9 @@ export interface Recipe {
   usedExpiringItems: string[];
   allIngredients: RecipeIngredient[];
   instructions: string[];
-  source?: 'gemini' | 'local';
+  source?: 'gemini' | 'local' | 'custom';
+  cookedCount?: number;
+  lastCookedAt?: string;
 }
 
 export interface UserPreferences {
