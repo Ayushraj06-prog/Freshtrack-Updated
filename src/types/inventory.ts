@@ -36,6 +36,8 @@ export interface InventoryItem {
   storage: StorageLocation;
   price: number | null; // In INR (₹)
   status: ItemStatus;
+  originalQuantity?: number | null;
+  savedMoney?: number | null;
   usedAt?: string | null;
   source: 'barcode' | 'receipt' | 'manual';
   barcode?: string | null;
@@ -43,6 +45,14 @@ export interface InventoryItem {
   imageUrl?: string | null;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export type PortionPreset = 'little' | 'half' | 'most' | 'all' | 'custom';
+
+export interface UseItemPayload {
+  portion?: number; // 0.25, 0.5, 0.75, 1.0 or custom 0..1
+  usedQuantity?: number; // exact amount used
+  usedPortionName?: string; // e.g. "A Little (25%)", "Half (50%)"
 }
 
 export interface RecipeIngredient {

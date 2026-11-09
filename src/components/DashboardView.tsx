@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   TrendingUp,
   AlertTriangle,
@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays } from '../data/shelfLifeData';
+import { InventoryItem } from '../types/inventory';
+import { UseItemModal } from './UseItemModal';
 
 interface DashboardViewProps {
   setActiveTab: (tab: string) => void;
@@ -26,6 +28,7 @@ interface DashboardViewProps {
 
 export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOpenAddModal }) => {
   const { items, stats, markAsUsed, dbInfo } = useInventory();
+  const [usingItem, setUsingItem] = useState<InventoryItem | null>(null);
 
   const urgentItems = items
     .filter((i) => i.status === 'active' && getRemainingDays(i.estimatedExpiryDate) <= 2)
@@ -162,10 +165,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
                     </p>
                   </div>
                   <button
-                    onClick={() => markAsUsed(item.id)}
+                    onClick={() => setUsingItem(item)}
                     className="px-2.5 py-1.5 rounded-xl bg-[#2C5F2D] hover:bg-[#204721] text-white text-[11px] font-bold shrink-0 transition-colors cursor-pointer"
                   >
-                    Cooked!
+                    Cooked / Use
                   </button>
                 </div>
               );
@@ -226,6 +229,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
           ))}
         </div>
       </div>
+
+      {/* Cooking & Portion Modal */}
+      {usingItem && (
+        <UseItemModal
+          item={usingItem}
+          onClose={() => setUsingItem(null)}
+          onConfirm={(id, options) => markAsUsed(id, options)}
+        />
+      )}
     </div>
   );
 };

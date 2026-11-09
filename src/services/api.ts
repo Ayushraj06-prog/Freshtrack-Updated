@@ -63,9 +63,11 @@ export const api = {
     return true;
   },
 
-  async markAsUsed(id: string): Promise<InventoryItem> {
+  async markAsUsed(id: string, options?: { portion?: number; usedQuantity?: number; usedPortionName?: string }): Promise<InventoryItem> {
     const res = await fetch(`/api/items/${id}/use`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options || {}),
     });
     if (!res.ok) throw new Error(`Failed to mark used: ${res.status}`);
     const data = await res.json();

@@ -3,10 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Sparkles, X, AlertTriangle, Utensils, CheckCircle2 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays } from '../data/shelfLifeData';
+import { InventoryItem } from '../types/inventory';
+import { UseItemModal } from './UseItemModal';
 
 interface MorningDigestModalProps {
   isOpen: boolean;
@@ -20,6 +22,7 @@ export const MorningDigestModal: React.FC<MorningDigestModalProps> = ({
   setActiveTab,
 }) => {
   const { items, stats, markAsUsed } = useInventory();
+  const [usingItem, setUsingItem] = useState<InventoryItem | null>(null);
 
   if (!isOpen) return null;
 
@@ -87,10 +90,10 @@ export const MorningDigestModal: React.FC<MorningDigestModalProps> = ({
                         </p>
                       </div>
                       <button
-                        onClick={() => markAsUsed(item.id)}
-                        className="px-3 py-1.5 bg-[#2C5F2D] hover:bg-[#204721] text-white text-[11px] font-bold rounded-xl shrink-0 transition-colors"
+                        onClick={() => setUsingItem(item)}
+                        className="px-3 py-1.5 bg-[#2C5F2D] hover:bg-[#204721] text-white text-[11px] font-bold rounded-xl shrink-0 transition-colors cursor-pointer"
                       >
-                        Cooked!
+                        Cook / Use
                       </button>
                     </div>
                   );
@@ -126,6 +129,15 @@ export const MorningDigestModal: React.FC<MorningDigestModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Cooking & Portion Modal */}
+      {usingItem && (
+        <UseItemModal
+          item={usingItem}
+          onClose={() => setUsingItem(null)}
+          onConfirm={(id, options) => markAsUsed(id, options)}
+        />
+      )}
     </div>
   );
 };

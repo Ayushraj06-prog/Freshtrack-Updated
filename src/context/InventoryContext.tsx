@@ -11,6 +11,7 @@ import {
   UserPreferences,
   InventoryStats,
   DbInfo,
+  UseItemPayload,
 } from '../types/inventory';
 
 interface InventoryContextType {
@@ -23,7 +24,7 @@ interface InventoryContextType {
   addMultipleItems: (items: Omit<InventoryItem, 'id'>[]) => Promise<string[]>;
   updateItem: (id: string, updates: Partial<InventoryItem>) => Promise<void>;
   deleteItem: (id: string) => Promise<void>;
-  markAsUsed: (id: string) => Promise<void>;
+  markAsUsed: (id: string, options?: UseItemPayload) => Promise<void>;
   markMultipleAsUsed: (ids: string[]) => Promise<void>;
   markAsExpired: (id: string) => Promise<void>;
   updatePreferences: (updates: Partial<UserPreferences>) => Promise<void>;
@@ -167,13 +168,66 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
-  const markAsUsed = async (id: string) => {
+  const markAsUsed = async (id: string, options?: UseItemPayload) => {
+    const existing = items.find((i) => i.id === id);
+    if (!existing) return;
+
+    const origQty = existing.originalQuantity || existing.quantity || 1;
+    const currQty = existing.quantity || 1;
+    let portion = 1.0;
+    let qtyUsed = currQty;
+
+    if (options && typeof options.portion === 'number' && options.portion > 0 && options.portion <= 1.0) {
+      portion = options.portion;
+      qtyUsed = Math.min(currQty, Number((currQty * portion).toFixed(2)));
+    } else if (options && typeof options.usedQuantity === 'number' && options.usedQuantity > 0) {
+      qtyUsed = Math.min(currQty, options.usedQuantity);
+      portion = currQty > 0 ? (qtyUsed / currQty) : 1.0;
+    }
+
+    const remainingQty = Math.max(0, Number((currQty - qtyUsed).toFixed(2)));
+    const portionRatioOfTotal = origQty > 0 ? (qtyUsed / origQty) : portion;
+    const moneySavedFromThisPortion = existing.price ? Math.round(existing.price * portionRatioOfTotal) : 0;
+    const newSavedMoney = (Number(existing.savedMoney) || 0) + moneySavedFromThisPortion;
     const nowIso = new Date().toISOString();
+    const isFinished = remainingQty <= 0 || portion >= 0.98;
+
+    const portionLabel = options?.usedPortionName || (isFinished ? 'Finished 100%' : `Used ${Math.round(portion * 100)}% (${qtyUsed} ${existing.unit})`);
+    const dateStr = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    const usageNote = `[${dateStr}] ${portionLabel} (Saved ₹${moneySavedFromThisPortion})`;
+    const updatedNotes = existing.notes ? `${existing.notes} • ${usageNote}` : usageNote;
+
     setItems((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, status: 'used', usedAt: nowIso } : i))
+      prev.map((i) => {
+        if (i.id !== id) return i;
+        if (isFinished) {
+          return {
+            ...i,
+            status: 'used',
+            quantity: 0,
+            originalQuantity: origQty,
+            savedMoney: newSavedMoney > 0 ? newSavedMoney : (existing.price || 0),
+            usedAt: nowIso,
+            notes: updatedNotes,
+          };
+        } else {
+          return {
+            ...i,
+            status: 'active',
+            quantity: remainingQty,
+            originalQuantity: origQty,
+            savedMoney: newSavedMoney,
+            notes: updatedNotes,
+          };
+        }
+      })
     );
+
     try {
-      await api.markAsUsed(id);
+      const serverUpdated = await api.markAsUsed(id, options);
+      if (serverUpdated) {
+        setItems((prev) => prev.map((i) => (i.id === id ? serverUpdated : i)));
+      }
       api.getDbInfo().then(setDbInfo).catch(() => {});
     } catch (err) {
       console.error('Failed to mark item as used in backend DB:', err);
@@ -292,6 +346,11 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         totalScansLogged++;
       }
 
+      // Add any money saved through partial cooking or finished usage
+      if (item.savedMoney && item.savedMoney > 0) {
+        moneySavedRs += item.savedMoney;
+      }
+
       if (item.status === 'active') {
         activeCount++;
         const rem = getRemainingDays(item.estimatedExpiryDate);
@@ -302,10 +361,13 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
       } else if (item.status === 'used') {
         usedCount++;
-        if (item.price !== null && !isNaN(item.price)) {
-          moneySavedRs += item.price;
-        } else {
-          unpricedUsedCount++;
+        // If savedMoney wasn't set, default to item price
+        if (!item.savedMoney || item.savedMoney === 0) {
+          if (item.price !== null && !isNaN(item.price)) {
+            moneySavedRs += item.price;
+          } else {
+            unpricedUsedCount++;
+          }
         }
       } else if (item.status === 'expired') {
         expiredCount++;

@@ -40,6 +40,8 @@ sqliteDb.exec(`
     storage TEXT NOT NULL,
     price REAL,
     status TEXT NOT NULL,
+    originalQuantity REAL,
+    savedMoney REAL DEFAULT 0,
     usedAt TEXT,
     source TEXT NOT NULL,
     barcode TEXT,
@@ -48,7 +50,13 @@ sqliteDb.exec(`
     createdAt TEXT,
     updatedAt TEXT
   );
+`);
 
+// Safe migrations for existing SQLite databases
+try { sqliteDb.exec('ALTER TABLE items ADD COLUMN originalQuantity REAL;'); } catch {}
+try { sqliteDb.exec('ALTER TABLE items ADD COLUMN savedMoney REAL DEFAULT 0;'); } catch {}
+
+sqliteDb.exec(`
   CREATE TABLE IF NOT EXISTS preferences (
     id TEXT PRIMARY KEY,
     diet TEXT,
@@ -326,34 +334,37 @@ export const db = {
 
   insertItem(item: any) {
     const nowIso = new Date().toISOString();
+    const qty = Number(item.quantity) || 1;
     const prepared = {
       id: item.id || `item-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       name: item.name,
       category: item.category,
-      quantity: Number(item.quantity) || 1,
+      quantity: qty,
       unit: item.unit || 'pack',
       purchaseDate: item.purchaseDate || nowIso.split('T')[0],
       estimatedExpiryDate: item.estimatedExpiryDate,
-      printedExpiryDate: item.printedExpiryDate || null,
+      printedExpiryDate: item.printedExpiryDate ?? null,
       storage: item.storage || 'fridge',
       price: item.price !== null && item.price !== undefined && !isNaN(item.price) ? Number(item.price) : null,
       status: item.status || 'active',
-      usedAt: item.usedAt || null,
+      originalQuantity: item.originalQuantity ? Number(item.originalQuantity) : qty,
+      savedMoney: item.savedMoney ? Number(item.savedMoney) : 0,
+      usedAt: item.usedAt ?? null,
       source: item.source || 'manual',
-      barcode: item.barcode || null,
-      notes: item.notes || null,
-      imageUrl: item.imageUrl || null,
-      createdAt: nowIso,
+      barcode: item.barcode ?? null,
+      notes: item.notes ?? null,
+      imageUrl: item.imageUrl ?? null,
+      createdAt: item.createdAt || nowIso,
       updatedAt: nowIso,
     };
 
     const stmt = sqliteDb.prepare(`
       INSERT OR REPLACE INTO items (
         id, name, category, quantity, unit, purchaseDate, estimatedExpiryDate,
-        printedExpiryDate, storage, price, status, usedAt, source, barcode, notes, imageUrl, createdAt, updatedAt
+        printedExpiryDate, storage, price, status, originalQuantity, savedMoney, usedAt, source, barcode, notes, imageUrl, createdAt, updatedAt
       ) VALUES (
         @id, @name, @category, @quantity, @unit, @purchaseDate, @estimatedExpiryDate,
-        @printedExpiryDate, @storage, @price, @status, @usedAt, @source, @barcode, @notes, @imageUrl, @createdAt, @updatedAt
+        @printedExpiryDate, @storage, @price, @status, @originalQuantity, @savedMoney, @usedAt, @source, @barcode, @notes, @imageUrl, @createdAt, @updatedAt
       )
     `);
     stmt.run(prepared);
@@ -369,8 +380,24 @@ export const db = {
     if (!existing) return null;
 
     const merged = {
-      ...existing,
-      ...updates,
+      id,
+      name: updates.name ?? existing.name,
+      category: updates.category ?? existing.category,
+      quantity: updates.quantity !== undefined ? Number(updates.quantity) : Number(existing.quantity),
+      unit: updates.unit ?? existing.unit,
+      purchaseDate: updates.purchaseDate ?? existing.purchaseDate,
+      estimatedExpiryDate: updates.estimatedExpiryDate ?? existing.estimatedExpiryDate,
+      printedExpiryDate: (updates.printedExpiryDate !== undefined ? updates.printedExpiryDate : existing.printedExpiryDate) ?? null,
+      storage: updates.storage ?? existing.storage,
+      price: (updates.price !== undefined ? updates.price : existing.price) ?? null,
+      status: updates.status ?? existing.status,
+      originalQuantity: (updates.originalQuantity !== undefined ? updates.originalQuantity : existing.originalQuantity) ?? null,
+      savedMoney: (updates.savedMoney !== undefined ? updates.savedMoney : existing.savedMoney) ?? 0,
+      usedAt: (updates.usedAt !== undefined ? updates.usedAt : existing.usedAt) ?? null,
+      source: updates.source ?? existing.source,
+      barcode: (updates.barcode !== undefined ? updates.barcode : existing.barcode) ?? null,
+      notes: (updates.notes !== undefined ? updates.notes : existing.notes) ?? null,
+      imageUrl: (updates.imageUrl !== undefined ? updates.imageUrl : existing.imageUrl) ?? null,
       updatedAt: new Date().toISOString(),
     };
 
@@ -386,6 +413,8 @@ export const db = {
         storage = @storage,
         price = @price,
         status = @status,
+        originalQuantity = @originalQuantity,
+        savedMoney = @savedMoney,
         usedAt = @usedAt,
         source = @source,
         barcode = @barcode,
@@ -404,16 +433,60 @@ export const db = {
     return true;
   },
 
-  markItemUsed(id: string) {
-    return this.updateItem(id, {
-      status: 'used',
-      usedAt: new Date().toISOString(),
-    });
+  markItemUsed(id: string, options?: { portion?: number; usedQuantity?: number; usedPortionName?: string }) {
+    const existing = this.getItemById(id);
+    if (!existing) return null;
+
+    const origQty = Number(existing.originalQuantity) || Number(existing.quantity) || 1;
+    const currQty = Number(existing.quantity) || 1;
+    const nowIso = new Date().toISOString();
+
+    let portionFraction = 1.0;
+    let qtyUsed = currQty;
+
+    if (options && typeof options.portion === 'number' && options.portion > 0 && options.portion <= 1.0) {
+      portionFraction = options.portion;
+      qtyUsed = Math.min(currQty, Number((currQty * portionFraction).toFixed(2)));
+    } else if (options && typeof options.usedQuantity === 'number' && options.usedQuantity > 0) {
+      qtyUsed = Math.min(currQty, options.usedQuantity);
+      portionFraction = currQty > 0 ? (qtyUsed / currQty) : 1.0;
+    }
+
+    const remainingQty = Math.max(0, Number((currQty - qtyUsed).toFixed(2)));
+    const portionRatioOfTotal = origQty > 0 ? (qtyUsed / origQty) : portionFraction;
+    const moneySavedFromThisPortion = existing.price ? Math.round(existing.price * portionRatioOfTotal) : 0;
+    const newSavedMoney = (Number(existing.savedMoney) || 0) + moneySavedFromThisPortion;
+
+    const portionLabel = options?.usedPortionName || (portionFraction >= 1 ? 'Finished 100%' : `Used ${Math.round(portionFraction * 100)}% (${qtyUsed} ${existing.unit})`);
+    const dateStr = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    const usageNote = `[${dateStr}] ${portionLabel} (Saved ₹${moneySavedFromThisPortion})`;
+    const updatedNotes = existing.notes ? `${existing.notes} • ${usageNote}` : usageNote;
+
+    if (remainingQty <= 0 || portionFraction >= 0.98) {
+      // Finished completely
+      return this.updateItem(id, {
+        status: 'used',
+        quantity: 0,
+        originalQuantity: origQty,
+        savedMoney: newSavedMoney > 0 ? newSavedMoney : (existing.price || 0),
+        usedAt: nowIso,
+        notes: updatedNotes,
+      });
+    } else {
+      // Partially used - remains active with updated quantity!
+      return this.updateItem(id, {
+        status: 'active',
+        quantity: remainingQty,
+        originalQuantity: origQty,
+        savedMoney: newSavedMoney,
+        notes: updatedNotes,
+      });
+    }
   },
 
   markItemsUsed(ids: string[]) {
     const nowIso = new Date().toISOString();
-    return ids.map((id) => this.updateItem(id, { status: 'used', usedAt: nowIso })).filter(Boolean);
+    return ids.map((id) => this.markItemUsed(id, { portion: 1.0, usedPortionName: 'Finished 100%' })).filter(Boolean);
   },
 
   markItemExpired(id: string) {
@@ -493,6 +566,11 @@ export const db = {
         totalScansLogged++;
       }
 
+      // Accumulate any money saved from partial or full uses
+      if (item.savedMoney && item.savedMoney > 0) {
+        moneySavedRs += item.savedMoney;
+      }
+
       if (item.status === 'active') {
         activeCount++;
         const exp = new Date(item.estimatedExpiryDate);
@@ -505,10 +583,13 @@ export const db = {
         }
       } else if (item.status === 'used') {
         usedCount++;
-        if (item.price !== null && !isNaN(item.price)) {
-          moneySavedRs += item.price;
-        } else {
-          unpricedUsedCount++;
+        // If savedMoney wasn't tracked separately, fall back to price
+        if (!item.savedMoney || item.savedMoney === 0) {
+          if (item.price !== null && !isNaN(item.price)) {
+            moneySavedRs += item.price;
+          } else {
+            unpricedUsedCount++;
+          }
         }
       } else if (item.status === 'expired') {
         expiredCount++;
@@ -555,6 +636,8 @@ function mapItem(row: any) {
     storage: row.storage,
     price: row.price !== null ? Number(row.price) : null,
     status: row.status,
+    originalQuantity: row.originalQuantity !== null && row.originalQuantity !== undefined ? Number(row.originalQuantity) : undefined,
+    savedMoney: row.savedMoney !== null && row.savedMoney !== undefined ? Number(row.savedMoney) : 0,
     usedAt: row.usedAt || undefined,
     source: row.source,
     barcode: row.barcode || undefined,
@@ -564,3 +647,4 @@ function mapItem(row: any) {
     updatedAt: row.updatedAt || undefined,
   };
 }
+

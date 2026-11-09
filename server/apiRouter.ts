@@ -107,7 +107,8 @@ apiRouter.delete('/items/:id', (req, res) => {
 
 apiRouter.post('/items/:id/use', (req, res) => {
   try {
-    const updated = db.markItemUsed(req.params.id);
+    const { portion, usedQuantity, usedPortionName } = req.body || {};
+    const updated = db.markItemUsed(req.params.id, { portion, usedQuantity, usedPortionName });
     if (!updated) {
       return res.status(404).json({ success: false, error: 'Item not found' });
     }
