@@ -77,4 +77,58 @@ export const aiService = {
 
     return { recipes: [], source: 'local' };
   },
+
+  async scanProductPhoto(params: {
+    imageBase64: string;
+    mimeType?: string;
+  }): Promise<{
+    product: {
+      name: string;
+      brand?: string | null;
+      category: any;
+      quantity: number;
+      unit: string;
+      price: number | null;
+      barcode?: string | null;
+      mfgDate?: string | null;
+      expiryDate?: string | null;
+      estimatedExpiryDays: number;
+      storage: any;
+      detectedText?: string | null;
+    };
+    source: 'gemini' | 'local';
+  }> {
+    try {
+      const res = await fetch('/api/ai/scan-product', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.product && data.product.name) {
+          return { product: data.product, source: 'gemini' };
+        }
+      }
+    } catch (e) {
+      console.warn('Gemini product OCR scan unavailable, using local fallback.', e);
+    }
+
+    return {
+      product: {
+        name: 'Detected Grocery Item',
+        brand: null,
+        category: 'Dairy',
+        quantity: 1,
+        unit: 'pack',
+        price: null,
+        estimatedExpiryDays: 6,
+        storage: 'fridge',
+        detectedText: 'Analyzed with local rules',
+      },
+      source: 'local',
+    };
+  },
 };
+

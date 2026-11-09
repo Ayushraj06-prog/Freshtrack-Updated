@@ -168,7 +168,7 @@ export const SettingsView: React.FC = () => {
                 : 'bg-stone-100 text-stone-600'
             }`}
           >
-            {aiStatus?.configured ? 'Gemini 2.5 Flash Active' : 'Offline Engine Active'}
+            {aiStatus?.configured ? `${aiStatus.model} Active` : 'Offline Engine Active'}
           </span>
         </div>
 

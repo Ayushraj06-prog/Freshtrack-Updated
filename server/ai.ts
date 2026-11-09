@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Server-Side Gemini AI Controller
- * Uses @google/genai with gemini-2.5-flash for receipt OCR and Rasoi AI Chef.
+ * Uses @google/genai with gemini-3.8-flash for receipt OCR and Rasoi AI Chef.
  */
 
 import { GoogleGenAI, Type } from '@google/genai';
@@ -23,7 +23,7 @@ export const aiController = {
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     return {
       configured: Boolean(apiKey),
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       engine: 'Google Gemini AI',
     };
   },
@@ -70,7 +70,7 @@ Always return clean JSON containing an "items" array.`;
     }
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       contents,
       config: {
         systemInstruction: systemPrompt,
@@ -144,7 +144,7 @@ For each recipe, provide:
 - instructions: array of 4-6 numbered step-by-step cooking steps`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -221,7 +221,7 @@ Provide:
 - rationale: short explanation`;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -233,6 +233,70 @@ Provide:
             rationale: { type: Type.STRING },
           },
           required: ['days', 'storageRecommendation', 'rationale'],
+        },
+      },
+    });
+
+    return JSON.parse(response.text || '{}');
+  },
+
+  async scanProductPhoto({ imageBase64, mimeType }: { imageBase64: string; mimeType?: string }) {
+    const ai = getAiClient();
+    if (!ai) {
+      throw new Error('Gemini API key is not configured on the server.');
+    }
+
+    const systemPrompt = `You are an expert Indian grocery product packaging and OCR vision scanner.
+Your task is to analyze this photo of a food product packaging, grocery item, label, or barcode and extract ALL product details.
+CRITICAL EXTRACTION GUIDELINES FOR INDIAN GROCERIES:
+1. "name": Clean, full, recognizable product title (e.g. "Amul Malai Paneer", "Britannia 100% Whole Wheat Bread", "Tata Salt", "Fortune Sunflower Oil", "Mother Dairy Classic Curd", "Maggi 2-Minute Masala Noodles"). If fresh unbranded produce, describe accurately (e.g. "Fresh Hybrid Tomatoes", "Palak (Spinach)").
+2. "brand": Brand name if visible (e.g. "Amul", "Britannia", "Mother Dairy", "Tata", "Nestle", "Aashirvaad", "Fortune", "Parle") or null if unbranded produce.
+3. "category": Must be one of ["Dairy", "Vegetables", "Leafy Greens", "Fruits", "Grains & Flours", "Pulses & Dal", "Bakery & Bread", "Spices & Condiments", "Snacks & Packaged", "Eggs, Meat & Poultry", "Beverages", "Cooked Leftovers", "Other"].
+4. "quantity": Numerical quantity (e.g. 200, 500, 1, 400, 5) from the net weight / volume printed on the packet.
+5. "unit": Unit of measure (e.g. "g", "kg", "ml", "L", "pcs", "pack", "bunch").
+6. "price": MRP / Maximum Retail Price in Indian Rupees (₹) as a number if printed on the pack or typical Indian market price, or null.
+7. "barcode": The numeric EAN-13 / UPC barcode digits if visible in the photo, or null.
+8. "mfgDate": Printed Manufacturing / Packed Date in YYYY-MM-DD format if visible, or null.
+9. "expiryDate": Printed Expiry Date / Best Before Date in YYYY-MM-DD format if visible on the pack, or null.
+10. "estimatedExpiryDays": Realistic days of shelf life remaining under typical Indian household conditions (e.g., milk = 3, curd = 6, paneer = 5, bread = 4, greens = 4, tomatoes = 6, eggs = 21, atta = 120, spices = 365).
+11. "storage": Optimal storage recommendation: "fridge", "pantry", or "freezer".
+12. "detectedText": Summary of key text, claims, or labels spotted on the package.`;
+
+    const contents = [
+      {
+        inlineData: {
+          mimeType: mimeType || 'image/jpeg',
+          data: imageBase64.replace(/^data:image\/[a-z]+;base64,/, ''),
+        },
+      },
+      {
+        text: 'Extract all grocery product details from this photo: product name, brand, category, quantity, unit, price/MRP, barcode if visible, printed dates, and recommended storage.',
+      },
+    ];
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents,
+      config: {
+        systemInstruction: systemPrompt,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING },
+            brand: { type: Type.STRING, nullable: true },
+            category: { type: Type.STRING },
+            quantity: { type: Type.NUMBER },
+            unit: { type: Type.STRING },
+            price: { type: Type.NUMBER, nullable: true },
+            barcode: { type: Type.STRING, nullable: true },
+            mfgDate: { type: Type.STRING, nullable: true },
+            expiryDate: { type: Type.STRING, nullable: true },
+            estimatedExpiryDays: { type: Type.NUMBER },
+            storage: { type: Type.STRING },
+            detectedText: { type: Type.STRING, nullable: true },
+          },
+          required: ['name', 'category', 'quantity', 'unit', 'estimatedExpiryDays', 'storage'],
         },
       },
     });

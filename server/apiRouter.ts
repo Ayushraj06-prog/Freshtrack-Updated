@@ -223,3 +223,17 @@ apiRouter.post('/ai/estimate-shelf-life', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+apiRouter.post('/ai/scan-product', async (req, res) => {
+  try {
+    const { imageBase64, mimeType } = req.body;
+    if (!imageBase64) {
+      return res.status(400).json({ success: false, error: 'imageBase64 is required' });
+    }
+    const product = await aiController.scanProductPhoto({ imageBase64, mimeType });
+    res.json({ success: true, product });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
