@@ -1,7 +1,7 @@
 {
   "name": "FreshTrack - Smart Kitchen Inventory & Expiry Tracker",
   "description": "Zero-waste Indian kitchen manager with smart expiry tracking, receipt scanning, Rasoi AI Chef, and real-time backend SQLite database.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
 

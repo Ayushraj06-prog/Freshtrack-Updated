@@ -15,6 +15,16 @@ export interface AiStatus {
   engine?: string;
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 25000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export const aiService = {
   async getStatus(): Promise<AiStatus> {
     try {
@@ -32,11 +42,15 @@ export const aiService = {
     mimeType?: string;
   }): Promise<{ items: ReceiptParsedItem[]; source: 'gemini' | 'local' }> {
     try {
-      const res = await fetch('/api/ai/parse-receipt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
+      const res = await fetchWithTimeout(
+        '/api/ai/parse-receipt',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(params),
+        },
+        30000
+      );
 
       if (res.ok) {
         const data = await res.json();
@@ -59,11 +73,15 @@ export const aiService = {
     diet?: DietType;
   }): Promise<{ recipes: Recipe[]; source: 'gemini' | 'local' }> {
     try {
-      const res = await fetch('/api/ai/suggest-recipes', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
+      const res = await fetchWithTimeout(
+        '/api/ai/suggest-recipes',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(params),
+        },
+        25000
+      );
 
       if (res.ok) {
         const data = await res.json();
@@ -99,16 +117,21 @@ export const aiService = {
     source: 'gemini' | 'local';
   }> {
     try {
-      const res = await fetch('/api/ai/scan-product', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
+      const res = await fetchWithTimeout(
+        '/api/ai/scan-product',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(params),
+        },
+        30000
+      );
 
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.product && data.product.name) {
-          return { product: data.product, source: 'gemini' };
+          const source = data.product.source === 'local' ? 'local' : 'gemini';
+          return { product: data.product, source };
         }
       }
     } catch (e) {
@@ -117,18 +140,19 @@ export const aiService = {
 
     return {
       product: {
-        name: 'Detected Grocery Item',
+        name: 'Grocery Item',
         brand: null,
-        category: 'Dairy',
+        category: 'Other',
         quantity: 1,
         unit: 'pack',
         price: null,
-        estimatedExpiryDays: 6,
+        estimatedExpiryDays: 7,
         storage: 'fridge',
-        detectedText: 'Analyzed with local rules',
+        detectedText: 'Manual verification needed (offline fallback)',
       },
       source: 'local',
     };
   },
 };
+
 

@@ -36,7 +36,7 @@ export interface ScannedProductDraft {
   name: string;
   brand?: string;
   category: ItemCategory;
-  quantity: number;
+  quantity: number | string;
   unit: string;
   price: number | null;
   barcode?: string | null;
@@ -139,49 +139,62 @@ function compressImage(
   quality = 0.85
 ): Promise<{ base64: string; mimeType: string }> {
   return new Promise((resolve) => {
+    let settled = false;
+    const done = (result: { base64: string; mimeType: string }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(safetyTimer);
+      resolve(result);
+    };
+
+    let rawFallback = typeof source === 'string' ? source : '';
+    const safetyTimer = setTimeout(() => {
+      done({ base64: rawFallback, mimeType: 'image/jpeg' });
+    }, 6000);
+
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    if (typeof source === 'string' && /^https?:\/\//i.test(source)) {
+      img.crossOrigin = 'anonymous';
+    }
 
     const finalize = (imageElement: HTMLImageElement) => {
-      let width = imageElement.naturalWidth || imageElement.width || 800;
-      let height = imageElement.naturalHeight || imageElement.height || 600;
+      try {
+        let width = imageElement.naturalWidth || imageElement.width || 800;
+        let height = imageElement.naturalHeight || imageElement.height || 600;
 
-      if (width > maxDimension || height > maxDimension) {
-        if (width > height) {
-          height = Math.round((height * maxDimension) / width);
-          width = maxDimension;
-        } else {
-          width = Math.round((width * maxDimension) / height);
-          height = maxDimension;
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
         }
-      }
 
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        resolve({
-          base64: typeof source === 'string' ? source : '',
-          mimeType: 'image/jpeg',
-        });
-        return;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          done({ base64: rawFallback, mimeType: 'image/jpeg' });
+          return;
+        }
+        ctx.drawImage(imageElement, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        if (dataUrl && dataUrl.startsWith('data:image') && dataUrl.length > 100) {
+          done({ base64: dataUrl, mimeType: 'image/jpeg' });
+        } else {
+          done({ base64: rawFallback, mimeType: 'image/jpeg' });
+        }
+      } catch {
+        done({ base64: rawFallback, mimeType: 'image/jpeg' });
       }
-      ctx.drawImage(imageElement, 0, 0, width, height);
-      const dataUrl = canvas.toDataURL('image/jpeg', quality);
-      resolve({ base64: dataUrl, mimeType: 'image/jpeg' });
     };
 
     img.onload = () => finalize(img);
     img.onerror = () => {
-      if (typeof source === 'string') {
-        resolve({ base64: source, mimeType: 'image/jpeg' });
-      } else {
-        const reader = new FileReader();
-        reader.onload = () => resolve({ base64: reader.result as string, mimeType: 'image/jpeg' });
-        reader.onerror = () => resolve({ base64: '', mimeType: 'image/jpeg' });
-        reader.readAsDataURL(source);
-      }
+      done({ base64: rawFallback, mimeType: 'image/jpeg' });
     };
 
     if (typeof source === 'string') {
@@ -189,10 +202,16 @@ function compressImage(
     } else {
       const reader = new FileReader();
       reader.onload = () => {
-        img.src = reader.result as string;
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        rawFallback = result;
+        if (result) {
+          img.src = result;
+        } else {
+          done({ base64: '', mimeType: 'image/jpeg' });
+        }
       };
       reader.onerror = () => {
-        resolve({ base64: '', mimeType: 'image/jpeg' });
+        done({ base64: '', mimeType: 'image/jpeg' });
       };
       reader.readAsDataURL(source);
     }
@@ -206,7 +225,9 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
 
   // Photo & Barcode OCR State
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
   const [photoOcrLoading, setPhotoOcrLoading] = useState(false);
+  const [capturedPreviewUrl, setCapturedPreviewUrl] = useState<string | null>(null);
   const [scannedProduct, setScannedProduct] = useState<ScannedProductDraft | null>(null);
   const [ocrError, setOcrError] = useState('');
   const [showManualBarcode, setShowManualBarcode] = useState(false);
@@ -216,6 +237,7 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const productPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const nativeCameraInputRef = useRef<HTMLInputElement | null>(null);
 
   // Receipt State
   const [receiptText, setReceiptText] = useState('');
@@ -248,22 +270,36 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
     };
   }, []);
 
+  // Ensure video stream attaches reliably after <video> mounts
+  useEffect(() => {
+    if (!cameraActive || !streamRef.current || !videoRef.current) return;
+    const videoEl = videoRef.current;
+    videoEl.srcObject = streamRef.current;
+    videoEl.play().catch((err) => {
+      console.warn('Video autoplay blocked:', err);
+    });
+  }, [cameraActive]);
+
   const startCamera = async () => {
-    setCameraActive(true);
     setOcrError('');
+    setCameraReady(false);
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      // Fallback to native device camera file input on browsers/webviews without getUserMedia
+      nativeCameraInputRef.current?.click();
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-      }
+      setCameraActive(true);
     } catch (e: any) {
       console.warn('Camera access denied or unavailable', e);
-      setOcrError('Camera preview unavailable in current browser view. You can upload a photo or pick a sample Indian package below.');
       setCameraActive(false);
+      setOcrError('Live camera preview is blocked in this browser window. Tap "Take Photo (Device Camera)" or "Upload Package Photo" below.');
     }
   };
 
@@ -272,47 +308,86 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraReady(false);
     setCameraActive(false);
   };
 
-  // Capture frame from camera stream, compress to optimal size, and send to OCR
+  // Capture frame from camera stream, preserve aspect ratio up to 1200px, and send to OCR
   const captureCameraPhoto = async () => {
-    if (!videoRef.current) return;
     const video = videoRef.current;
+    if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
+      setOcrError('Camera frame is still loading. Wait 1 second and tap Snap again, or use Upload Package Photo.');
+      return;
+    }
+
+    const maxDim = 1200;
+    let width = video.videoWidth;
+    let height = video.videoHeight;
+    if (width > maxDim || height > maxDim) {
+      if (width > height) {
+        height = Math.round((height * maxDim) / width);
+        width = maxDim;
+      } else {
+        width = Math.round((width * maxDim) / height);
+        height = maxDim;
+      }
+    }
+
     const canvas = document.createElement('canvas');
-    const width = Math.min(1280, video.videoWidth || 640);
-    const height = Math.min(720, video.videoHeight || 480);
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
     ctx.drawImage(video, 0, 0, width, height);
     const base64 = canvas.toDataURL('image/jpeg', 0.85);
     stopCamera();
+    setCapturedPreviewUrl(base64);
     await handleScanProductPhoto(base64, 'image/jpeg');
   };
 
-  // Handle photo file uploaded from user disk with auto-compression
+  // Handle photo file uploaded from disk or captured via native mobile camera
   const handleProductPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Always reset input value so re-taking or picking the same photo works
+    e.target.value = '';
     if (!file) return;
+
     setPhotoOcrLoading(true);
     setOcrError('');
 
     try {
       const compressed = await compressImage(file, 1200, 0.85);
+      if (!compressed.base64) {
+        throw new Error('Could not read the selected image file.');
+      }
+      setCapturedPreviewUrl(compressed.base64);
       await handleScanProductPhoto(compressed.base64, compressed.mimeType);
     } catch (err: any) {
       console.warn('Image compression fallback:', err);
       const reader = new FileReader();
       reader.onload = async () => {
-        await handleScanProductPhoto(reader.result as string, file.type || 'image/jpeg');
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        if (result) {
+          setCapturedPreviewUrl(result);
+          await handleScanProductPhoto(result, file.type || 'image/jpeg');
+        } else {
+          setPhotoOcrLoading(false);
+          setOcrError('Could not read the selected photo. Please try a different image.');
+        }
+      };
+      reader.onerror = () => {
+        setPhotoOcrLoading(false);
+        setOcrError('Failed to read image file from device.');
       };
       reader.readAsDataURL(file);
     }
   };
 
-  // Process photo with Gemini Vision OCR
+  // Process photo with Gemini Vision OCR, ALWAYS opening an editable draft even if AI falls back
   const handleScanProductPhoto = async (base64: string, mimeType: string, presetItem?: any) => {
     setPhotoOcrLoading(true);
     setOcrError('');
@@ -322,8 +397,13 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
       if (res && res.product && res.product.name) {
         const p = res.product;
         const expiry = p.expiryDate || calculateExpiryDate(p.estimatedExpiryDays || 7);
+
+        if (res.source === 'local' && !presetItem) {
+          setOcrError('Auto-detection fell back to quick-edit mode. Your photo is attached below — verify or edit the item details and tap Save.');
+        }
+
         setScannedProduct({
-          name: p.name,
+          name: res.source === 'local' && !presetItem && p.name === 'Grocery Item' ? '' : p.name,
           brand: p.brand || (presetItem?.brand ?? ''),
           category: p.category || (presetItem?.category ?? 'Dairy'),
           quantity: p.quantity || (presetItem?.quantity ?? 1),
@@ -339,12 +419,44 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
         });
       } else if (presetItem) {
         applyPresetFallback(presetItem, base64);
+      } else {
+        setOcrError('Could not auto-extract all fields from this photo. Enter or verify the details below to save.');
+        setScannedProduct({
+          name: '',
+          brand: '',
+          category: 'Other',
+          quantity: 1,
+          unit: 'pack',
+          price: null,
+          barcode: null,
+          storage: 'fridge',
+          estimatedExpiryDays: 7,
+          expiryDate: calculateExpiryDate(7),
+          detectedText: 'Photo attached for manual entry',
+          imageUrl: base64,
+          source: 'local',
+        });
       }
     } catch (err: any) {
       if (presetItem) {
         applyPresetFallback(presetItem, base64);
       } else {
-        setOcrError('Could not read product details from photo. You can edit details below.');
+        setOcrError('Could not auto-read product details from photo. Please enter or adjust the details below.');
+        setScannedProduct({
+          name: '',
+          brand: '',
+          category: 'Other',
+          quantity: 1,
+          unit: 'pack',
+          price: null,
+          barcode: null,
+          storage: 'fridge',
+          estimatedExpiryDays: 7,
+          expiryDate: calculateExpiryDate(7),
+          detectedText: 'Photo attached for manual entry',
+          imageUrl: base64,
+          source: 'local',
+        });
       }
     } finally {
       setPhotoOcrLoading(false);
@@ -373,7 +485,7 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
   const handleSelectSamplePreset = async (preset: typeof SAMPLE_PRODUCT_PHOTOS[0]) => {
     setPhotoOcrLoading(true);
     setOcrError('');
-    // Instant prefill so the user immediately sees the populated product card
+    setCapturedPreviewUrl(preset.imageUrl);
     applyPresetFallback(preset, preset.imageUrl);
 
     try {
@@ -392,15 +504,18 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
 
   // Save scanned product into SQLite DB
   const handleSaveScannedProduct = async () => {
-    if (!scannedProduct || !scannedProduct.name) return;
+    if (!scannedProduct || !scannedProduct.name.trim()) {
+      setOcrError('Please enter a product name before saving.');
+      return;
+    }
 
     await addItem({
-      name: scannedProduct.name,
+      name: scannedProduct.name.trim(),
       category: scannedProduct.category,
       storage: scannedProduct.storage,
-      quantity: Number(scannedProduct.quantity) || 1,
+      quantity: Math.max(0.1, Number(scannedProduct.quantity) || 1),
       unit: scannedProduct.unit || 'pack',
-      price: scannedProduct.price !== null && !isNaN(scannedProduct.price) ? Number(scannedProduct.price) : null,
+      price: scannedProduct.price !== null && !isNaN(Number(scannedProduct.price)) ? Number(scannedProduct.price) : null,
       purchaseDate: new Date().toISOString().split('T')[0],
       estimatedExpiryDate: scannedProduct.expiryDate || calculateExpiryDate(scannedProduct.estimatedExpiryDays || 7),
       status: 'active',
@@ -473,6 +588,7 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
 
   const handleReceiptImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
     setParsingAi(true);
@@ -639,12 +755,21 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
           {/* 1. PHOTO & BARCODE OCR SCANNER (Primary) */}
           {activeTab === 'photo-ocr' && !showReviewScreen && (
             <div className="space-y-4">
-              {/* Hidden file input for photo upload */}
+              {/* Hidden file input for gallery/disk photo upload (NO capture attribute so gallery works everywhere) */}
+              <input
+                type="file"
+                accept="image/*"
+                ref={productPhotoInputRef}
+                onChange={handleProductPhotoUpload}
+                className="hidden"
+              />
+
+              {/* Dedicated native mobile camera input (opens phone camera directly) */}
               <input
                 type="file"
                 accept="image/*"
                 capture="environment"
-                ref={productPhotoInputRef}
+                ref={nativeCameraInputRef}
                 onChange={handleProductPhotoUpload}
                 className="hidden"
               />
@@ -652,20 +777,29 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
               {/* Live Camera Viewfinder or Action Card */}
               {cameraActive ? (
                 <div className="relative rounded-2xl overflow-hidden bg-black aspect-video flex items-center justify-center border border-stone-800">
-                  <video ref={videoRef} className="w-full h-full object-cover" autoPlay playsInline muted />
-                  
+                  <video
+                    ref={videoRef}
+                    onLoadedMetadata={() => setCameraReady(true)}
+                    onCanPlay={() => setCameraReady(true)}
+                    className="w-full h-full object-cover"
+                    autoPlay
+                    playsInline
+                    muted
+                  />
+
                   {/* Targeting Overlay Frame */}
                   <div className="absolute inset-x-8 top-1/2 -translate-y-1/2 h-28 border-2 border-dashed border-[#A3E635] rounded-xl pointer-events-none flex items-center justify-center">
                     <span className="text-[11px] font-bold text-white bg-black/70 px-3 py-1 rounded-full backdrop-blur-xs flex items-center gap-1.5">
                       <Scan className="w-3.5 h-3.5 text-[#A3E635]" />
-                      Align package, label, or barcode
+                      {cameraReady ? 'Align package, label, or barcode' : 'Starting camera...'}
                     </span>
                   </div>
 
                   {/* Camera Top Controls */}
                   <button
+                    type="button"
                     onClick={stopCamera}
-                    className="absolute top-2 right-2 px-2.5 py-1 bg-black/70 hover:bg-black text-white text-xs font-semibold rounded-lg"
+                    className="absolute top-2 right-2 px-2.5 py-1 bg-black/70 hover:bg-black text-white text-xs font-semibold rounded-lg cursor-pointer"
                   >
                     Close
                   </button>
@@ -673,8 +807,10 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                   {/* Shutter Button */}
                   <div className="absolute bottom-3 inset-x-0 flex justify-center">
                     <button
+                      type="button"
                       onClick={captureCameraPhoto}
-                      className="px-5 py-2.5 rounded-full bg-[#A3E635] text-[#2C5F2D] font-black text-xs shadow-xl active:scale-95 transition-transform flex items-center gap-2 cursor-pointer"
+                      disabled={!cameraReady}
+                      className="px-5 py-2.5 rounded-full bg-[#A3E635] text-[#2C5F2D] font-black text-xs shadow-xl active:scale-95 transition-transform flex items-center gap-2 cursor-pointer disabled:opacity-60"
                     >
                       <Camera className="w-4 h-4" />
                       <span>📸 Snap &amp; Scan Photo</span>
@@ -696,56 +832,85 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                     </p>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row gap-2 justify-center pt-1">
+                  <div className="flex flex-wrap gap-2 justify-center pt-1">
                     <button
+                      type="button"
                       onClick={startCamera}
                       className="px-4 py-2.5 rounded-xl bg-[#2C5F2D] hover:bg-[#204721] text-white text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
                     >
                       <Camera className="w-4 h-4 text-[#A3E635]" />
-                      <span>Snap Photo with Camera</span>
+                      <span>Live Camera Scan</span>
                     </button>
 
                     <button
+                      type="button"
+                      onClick={() => nativeCameraInputRef.current?.click()}
+                      className="px-4 py-2.5 rounded-xl bg-[#EAF3E6] hover:bg-[#d8edd1] text-[#2C5F2D] border border-[#6B9B4F]/40 text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Camera className="w-4 h-4 text-[#2C5F2D]" />
+                      <span>Take Photo (Phone Camera)</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => productPhotoInputRef.current?.click()}
                       className="px-4 py-2.5 rounded-xl bg-white hover:bg-stone-100 text-stone-800 text-xs font-bold border border-[#E2E8DE] transition-all flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <Upload className="w-4 h-4 text-stone-600" />
-                      <span>Upload Package Photo</span>
+                      <span>Upload Photo</span>
                     </button>
                   </div>
                 </div>
               )}
 
-              {/* Scanning Progress */}
+              {/* Scanning Progress with captured photo preview */}
               {photoOcrLoading && (
-                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-3 text-xs text-emerald-900 animate-pulse">
-                  <RefreshCw className="w-5 h-5 text-emerald-600 animate-spin shrink-0" />
-                  <div>
-                    <p className="font-bold">Analyzing Product Photo with Vision OCR...</p>
-                    <p className="text-[11px] text-emerald-700">Extracting product title, net quantity, brand, price &amp; shelf life</p>
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-3 text-xs text-emerald-900">
+                  {capturedPreviewUrl ? (
+                    <img
+                      src={capturedPreviewUrl}
+                      alt="Captured preview"
+                      className="w-12 h-12 rounded-xl object-cover border border-emerald-300 shrink-0"
+                    />
+                  ) : (
+                    <RefreshCw className="w-5 h-5 text-emerald-600 animate-spin shrink-0" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold flex items-center gap-1.5">
+                      <RefreshCw className="w-3.5 h-3.5 text-emerald-600 animate-spin shrink-0" />
+                      <span>Analyzing Product Photo with Vision OCR...</span>
+                    </p>
+                    <p className="text-[11px] text-emerald-700 mt-0.5">
+                      Extracting product title, net quantity, brand, price &amp; shelf life
+                    </p>
                   </div>
                 </div>
               )}
 
-              {/* Error Message */}
+              {/* Error / Notice Message */}
               {ocrError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <p>{ocrError}</p>
                 </div>
               )}
 
-              {/* Extracted Product Review Card */}
+              {/* Extracted Product Review & Input Card */}
               {scannedProduct && !photoOcrLoading && (
                 <div className="p-4 bg-[#F7F8F4] border border-[#6B9B4F] rounded-2xl space-y-3 shadow-xs animate-in fade-in">
                   <div className="flex items-center justify-between pb-2 border-b border-stone-200">
                     <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1">
                       <Sparkles className="w-3 h-3" />
-                      {scannedProduct.source === 'gemini' ? 'Gemini Vision OCR' : 'Local OCR Scanner'}
+                      {scannedProduct.source === 'gemini' ? 'Gemini Vision OCR' : 'Photo Captured • Quick Input'}
                     </span>
                     <button
-                      onClick={() => setScannedProduct(null)}
-                      className="text-[11px] text-stone-400 hover:text-stone-700 font-semibold"
+                      type="button"
+                      onClick={() => {
+                        setScannedProduct(null);
+                        setCapturedPreviewUrl(null);
+                        setOcrError('');
+                      }}
+                      className="text-[11px] text-stone-400 hover:text-stone-700 font-semibold cursor-pointer"
                     >
                       Clear
                     </button>
@@ -755,7 +920,7 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                     {scannedProduct.imageUrl ? (
                       <img
                         src={scannedProduct.imageUrl}
-                        alt={scannedProduct.name}
+                        alt={scannedProduct.name || 'Scanned product'}
                         className="w-16 h-16 object-contain rounded-xl bg-white p-1 border border-stone-200 shrink-0 shadow-2xs"
                       />
                     ) : (
@@ -764,23 +929,32 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                       </div>
                     )}
 
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <div className="flex items-center gap-1.5">
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                      <div>
+                        <label className="text-[10px] font-bold text-stone-500 uppercase">Product Name *</label>
                         <input
                           type="text"
                           value={scannedProduct.name}
                           onChange={(e) => setScannedProduct({ ...scannedProduct, name: e.target.value })}
-                          className="font-extrabold text-sm text-stone-900 w-full bg-white border border-stone-200 rounded-lg px-2 py-1 focus:ring-1 focus:ring-[#2C5F2D]"
-                          placeholder="Product Name"
+                          className="font-extrabold text-sm text-stone-900 w-full bg-white border border-stone-300 rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-[#2C5F2D] focus:outline-none"
+                          placeholder="Type product name (e.g. Amul Paneer, Atta)"
                         />
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-stone-500">
-                        {scannedProduct.brand && (
-                          <span className="font-semibold text-stone-700">Brand: {scannedProduct.brand}</span>
-                        )}
-                        {scannedProduct.barcode && (
-                          <span className="font-mono text-[10px] text-stone-400">Barcode: {scannedProduct.barcode}</span>
-                        )}
+                      <div className="grid grid-cols-2 gap-1.5 text-xs">
+                        <input
+                          type="text"
+                          value={scannedProduct.brand || ''}
+                          onChange={(e) => setScannedProduct({ ...scannedProduct, brand: e.target.value })}
+                          placeholder="Brand (optional)"
+                          className="bg-white border border-[#E2E8DE] rounded-lg px-2 py-1 text-[11px] font-medium"
+                        />
+                        <input
+                          type="text"
+                          value={scannedProduct.barcode || ''}
+                          onChange={(e) => setScannedProduct({ ...scannedProduct, barcode: e.target.value })}
+                          placeholder="Barcode (optional)"
+                          className="bg-white border border-[#E2E8DE] rounded-lg px-2 py-1 text-[11px] font-mono"
+                        />
                       </div>
                     </div>
                   </div>
@@ -794,7 +968,7 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                         min="0.1"
                         step="any"
                         value={scannedProduct.quantity}
-                        onChange={(e) => setScannedProduct({ ...scannedProduct, quantity: Number(e.target.value) || 1 })}
+                        onChange={(e) => setScannedProduct({ ...scannedProduct, quantity: e.target.value })}
                         className="w-full p-2 bg-white border border-[#E2E8DE] rounded-lg"
                       />
                     </div>
@@ -860,6 +1034,7 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                   </div>
 
                   <button
+                    type="button"
                     onClick={handleSaveScannedProduct}
                     className="w-full py-2.5 rounded-xl bg-[#2C5F2D] hover:bg-[#204721] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md shadow-[#2C5F2D]/20 active:scale-98 transition-all cursor-pointer"
                   >

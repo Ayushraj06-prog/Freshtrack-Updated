@@ -41,15 +41,26 @@ function cleanMimeType(mime?: string): string {
   return mime.includes('/') ? mime : 'image/jpeg';
 }
 
+function cleanJsonResponse(text?: string): any {
+  if (!text) return {};
+  const cleaned = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  return JSON.parse(cleaned || '{}');
+}
+
 /**
  * Resilient multi-model Gemini caller.
- * Automatically tries modern models in priority order and applies a timeout.
+ * Uses supported Gemini models in priority order with proper timeout cleanup.
  */
-async function callGemini(ai: GoogleGenAI, requestConfig: any, timeoutMs = 25000) {
-  const models = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-4-argon'];
+async function callGemini(ai: GoogleGenAI, requestConfig: any, timeoutMs = 15000) {
+  const models = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'];
   let lastError: any = null;
 
   for (const model of models) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       console.log(`[Gemini AI] Trying model: ${model}...`);
       const apiCall = ai.models.generateContent({
@@ -57,17 +68,21 @@ async function callGemini(ai: GoogleGenAI, requestConfig: any, timeoutMs = 25000
         model,
       });
 
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout: ${model} call exceeded ${timeoutMs}ms`)), timeoutMs)
-      );
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Timeout: ${model} call exceeded ${timeoutMs}ms`)),
+          timeoutMs
+        );
+      });
 
       const response = (await Promise.race([apiCall, timeoutPromise])) as any;
+      if (timer) clearTimeout(timer);
       console.log(`[Gemini AI] Succeeded with model: ${model}`);
       return response;
     } catch (err: any) {
+      if (timer) clearTimeout(timer);
       console.warn(`[Gemini AI] Model "${model}" failed:`, err?.message || err);
       lastError = err;
-      // Loop to try next fallback model
     }
   }
 
@@ -79,8 +94,8 @@ export const aiController = {
     const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
     return {
       configured: Boolean(apiKey),
-      model: 'gemini-3.8-flash',
-      fallbackModels: ['gemini-flash-latest', 'gemini-3.1-flash-lite'],
+      model: 'gemini-4-hydrogen',
+      fallbackModels: ['gemini-3.1-flash-lite'],
       engine: 'Google Gemini AI',
     };
   },
@@ -156,7 +171,7 @@ Always return clean JSON containing an "items" array.`;
       },
     });
 
-    const parsed = JSON.parse(response.text || '{}');
+    const parsed = cleanJsonResponse(response.text);
     return (parsed.items || []).map((it: any, idx: number) => ({
       ...it,
       id: `ai-parsed-${Date.now()}-${idx}`,
@@ -256,7 +271,7 @@ For each recipe, provide:
       },
     });
 
-    const parsed = JSON.parse(response.text || '{}');
+    const parsed = cleanJsonResponse(response.text);
     return (parsed.recipes || []).map((r: any) => ({
       ...r,
       source: 'gemini',
@@ -291,17 +306,21 @@ Provide:
       },
     });
 
-    return JSON.parse(response.text || '{}');
+    return cleanJsonResponse(response.text);
   },
 
   async scanProductPhoto({ imageBase64, mimeType }: { imageBase64: string; mimeType?: string }) {
     const cleanData = cleanBase64Data(imageBase64);
-    const mime = cleanMimeType(mimeType);
+    const mime = cleanMimeType(mimeType || imageBase64);
+
+    if (!cleanData || cleanData.length < 32) {
+      return generateSmartFallbackProduct('No valid image data received from camera/upload.');
+    }
 
     const ai = getAiClient();
     if (!ai) {
       console.warn('[Gemini AI] No API key on server, using smart fallback.');
-      return generateSmartFallbackProduct();
+      return generateSmartFallbackProduct('Gemini API key not configured on server.');
     }
 
     const systemPrompt = `You are an expert Indian grocery product packaging and OCR vision scanner.
@@ -359,32 +378,44 @@ CRITICAL EXTRACTION GUIDELINES FOR INDIAN GROCERIES:
         },
       });
 
-      const parsed = JSON.parse(response.text || '{}');
+      const parsed = cleanJsonResponse(response.text);
       return {
-        ...parsed,
+        name: parsed.name || 'Detected Grocery Item',
+        brand: parsed.brand ?? null,
+        category: parsed.category || 'Other',
+        quantity: Number(parsed.quantity) || 1,
+        unit: parsed.unit || 'pack',
+        price: parsed.price !== null && parsed.price !== undefined ? Number(parsed.price) : null,
+        barcode: parsed.barcode ?? null,
+        mfgDate: parsed.mfgDate ?? null,
+        expiryDate: parsed.expiryDate ?? null,
+        estimatedExpiryDays: Number(parsed.estimatedExpiryDays) || 7,
+        storage: ['fridge', 'pantry', 'freezer'].includes(parsed.storage) ? parsed.storage : 'fridge',
+        detectedText: parsed.detectedText ?? null,
         source: 'gemini',
       };
     } catch (err: any) {
-      console.warn('[Gemini AI] Vision OCR failed, using fallback:', err?.message || err);
-      return generateSmartFallbackProduct();
+      const errMsg = err?.message || String(err);
+      console.warn('[Gemini AI] Vision OCR failed, using fallback:', errMsg);
+      return generateSmartFallbackProduct(errMsg);
     }
   },
 };
 
-function generateSmartFallbackProduct() {
+function generateSmartFallbackProduct(reason?: string) {
   return {
-    name: 'Fresh Grocery Item',
+    name: 'Grocery Item',
     brand: null,
     category: 'Vegetables',
     quantity: 1,
-    unit: 'kg',
+    unit: 'pack',
     price: null,
     barcode: null,
     mfgDate: null,
     expiryDate: null,
     estimatedExpiryDays: 7,
     storage: 'fridge',
-    detectedText: 'Smart Local OCR Scanner (offline fallback)',
+    detectedText: reason ? `Local OCR fallback (${reason})` : 'Smart Local OCR Scanner (offline fallback)',
     source: 'local',
   };
 }
