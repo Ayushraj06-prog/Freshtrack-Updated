@@ -24,6 +24,8 @@ export type ItemStatus = 'active' | 'used' | 'expired';
 
 export type DietType = 'veg' | 'egg' | 'non-veg';
 
+export type OperationScale = 'household' | 'restaurant' | 'enterprise';
+
 export interface InventoryItem {
   id: string;
   name: string;
@@ -43,6 +45,11 @@ export interface InventoryItem {
   barcode?: string | null;
   notes?: string | null;
   imageUrl?: string | null;
+  // Commercial / Restaurant / Enterprise parameters
+  batchCode?: string | null;
+  supplierName?: string | null;
+  parLevel?: number | null;
+  branchZone?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -109,8 +116,13 @@ export interface Recipe {
 }
 
 export interface UserPreferences {
+  operationScale: OperationScale;
+  organizationName?: string;
+  branchLocation?: string;
+  wasteBudgetRs?: number;
+  scaleConfigured?: boolean;
   diet: DietType;
-  reminderLeadDays: number; // 1 or 2
+  reminderLeadDays: number; // 1, 2, 3, or 7
   morningDigestEnabled: boolean;
   morningDigestTime: string;
   defaultStorage: StorageLocation;
@@ -130,6 +142,9 @@ export interface InventoryStats {
   savingPercentage: number;
   zeroWasteStreakDays: number;
   totalScansLogged: number;
+  lowStockCount?: number;
+  totalActiveValueRs?: number;
+  valueAtRiskRs?: number;
 }
 
 export interface ReceiptParsedItem {

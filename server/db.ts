@@ -47,6 +47,10 @@ sqliteDb.exec(`
     barcode TEXT,
     notes TEXT,
     imageUrl TEXT,
+    batchCode TEXT,
+    supplierName TEXT,
+    parLevel REAL,
+    branchZone TEXT,
     createdAt TEXT,
     updatedAt TEXT
   );
@@ -55,10 +59,19 @@ sqliteDb.exec(`
 // Safe migrations for existing SQLite databases
 try { sqliteDb.exec('ALTER TABLE items ADD COLUMN originalQuantity REAL;'); } catch {}
 try { sqliteDb.exec('ALTER TABLE items ADD COLUMN savedMoney REAL DEFAULT 0;'); } catch {}
+try { sqliteDb.exec('ALTER TABLE items ADD COLUMN batchCode TEXT;'); } catch {}
+try { sqliteDb.exec('ALTER TABLE items ADD COLUMN supplierName TEXT;'); } catch {}
+try { sqliteDb.exec('ALTER TABLE items ADD COLUMN parLevel REAL;'); } catch {}
+try { sqliteDb.exec('ALTER TABLE items ADD COLUMN branchZone TEXT;'); } catch {}
 
 sqliteDb.exec(`
   CREATE TABLE IF NOT EXISTS preferences (
     id TEXT PRIMARY KEY,
+    operationScale TEXT DEFAULT 'household',
+    organizationName TEXT DEFAULT '',
+    branchLocation TEXT DEFAULT '',
+    wasteBudgetRs REAL DEFAULT 2000,
+    scaleConfigured INTEGER DEFAULT 0,
     diet TEXT,
     reminderLeadDays INTEGER,
     morningDigestEnabled INTEGER,
@@ -94,6 +107,13 @@ sqliteDb.exec(`
     updatedAt TEXT
   );
 `);
+
+// Safe migrations for existing preferences tables
+try { sqliteDb.exec("ALTER TABLE preferences ADD COLUMN operationScale TEXT DEFAULT 'household';"); } catch {}
+try { sqliteDb.exec("ALTER TABLE preferences ADD COLUMN organizationName TEXT DEFAULT '';"); } catch {}
+try { sqliteDb.exec("ALTER TABLE preferences ADD COLUMN branchLocation TEXT DEFAULT '';"); } catch {}
+try { sqliteDb.exec('ALTER TABLE preferences ADD COLUMN wasteBudgetRs REAL DEFAULT 2000;'); } catch {}
+try { sqliteDb.exec('ALTER TABLE preferences ADD COLUMN scaleConfigured INTEGER DEFAULT 0;'); } catch {}
 
 // Seed default data if empty
 const countStmt = sqliteDb.prepare('SELECT COUNT(*) as count FROM items');
@@ -322,10 +342,13 @@ export function seedKitchenData() {
     });
   }
 
-  // Seed default preferences
+  // Seed default preferences only if none exists yet
   sqliteDb.prepare(`
-    INSERT OR REPLACE INTO preferences (id, diet, reminderLeadDays, morningDigestEnabled, morningDigestTime, defaultStorage, updatedAt)
-    VALUES ('default', 'veg', 2, 1, '08:30', 'fridge', ?)
+    INSERT OR IGNORE INTO preferences (
+      id, operationScale, organizationName, branchLocation, wasteBudgetRs, scaleConfigured,
+      diet, reminderLeadDays, morningDigestEnabled, morningDigestTime, defaultStorage, updatedAt
+    )
+    VALUES ('default', 'household', '', '', 2000, 0, 'veg', 2, 1, '08:30', 'fridge', ?)
   `).run(now);
 
   // Seed sample custom recipe if none exists
@@ -419,6 +442,10 @@ export const db = {
       barcode: item.barcode ?? null,
       notes: item.notes ?? null,
       imageUrl: item.imageUrl ?? null,
+      batchCode: item.batchCode ?? null,
+      supplierName: item.supplierName ?? null,
+      parLevel: item.parLevel !== null && item.parLevel !== undefined && !isNaN(Number(item.parLevel)) ? Number(item.parLevel) : null,
+      branchZone: item.branchZone ?? null,
       createdAt: item.createdAt || nowIso,
       updatedAt: nowIso,
     };
@@ -426,10 +453,12 @@ export const db = {
     const stmt = sqliteDb.prepare(`
       INSERT OR REPLACE INTO items (
         id, name, category, quantity, unit, purchaseDate, estimatedExpiryDate,
-        printedExpiryDate, storage, price, status, originalQuantity, savedMoney, usedAt, source, barcode, notes, imageUrl, createdAt, updatedAt
+        printedExpiryDate, storage, price, status, originalQuantity, savedMoney, usedAt, source, barcode, notes, imageUrl,
+        batchCode, supplierName, parLevel, branchZone, createdAt, updatedAt
       ) VALUES (
         @id, @name, @category, @quantity, @unit, @purchaseDate, @estimatedExpiryDate,
-        @printedExpiryDate, @storage, @price, @status, @originalQuantity, @savedMoney, @usedAt, @source, @barcode, @notes, @imageUrl, @createdAt, @updatedAt
+        @printedExpiryDate, @storage, @price, @status, @originalQuantity, @savedMoney, @usedAt, @source, @barcode, @notes, @imageUrl,
+        @batchCode, @supplierName, @parLevel, @branchZone, @createdAt, @updatedAt
       )
     `);
     stmt.run(prepared);
@@ -443,6 +472,9 @@ export const db = {
   updateItem(id: string, updates: any) {
     const existing = this.getItemById(id);
     if (!existing) return null;
+
+    const rawPar = updates.parLevel !== undefined ? updates.parLevel : existing.parLevel;
+    const normalizedPar = rawPar !== null && rawPar !== undefined && !isNaN(Number(rawPar)) ? Number(rawPar) : null;
 
     const merged = {
       id,
@@ -463,6 +495,10 @@ export const db = {
       barcode: (updates.barcode !== undefined ? updates.barcode : existing.barcode) ?? null,
       notes: (updates.notes !== undefined ? updates.notes : existing.notes) ?? null,
       imageUrl: (updates.imageUrl !== undefined ? updates.imageUrl : existing.imageUrl) ?? null,
+      batchCode: (updates.batchCode !== undefined ? updates.batchCode : existing.batchCode) ?? null,
+      supplierName: (updates.supplierName !== undefined ? updates.supplierName : existing.supplierName) ?? null,
+      parLevel: normalizedPar,
+      branchZone: (updates.branchZone !== undefined ? updates.branchZone : existing.branchZone) ?? null,
       updatedAt: new Date().toISOString(),
     };
 
@@ -485,6 +521,10 @@ export const db = {
         barcode = @barcode,
         notes = @notes,
         imageUrl = @imageUrl,
+        batchCode = @batchCode,
+        supplierName = @supplierName,
+        parLevel = @parLevel,
+        branchZone = @branchZone,
         updatedAt = @updatedAt
       WHERE id = @id
     `);
@@ -569,6 +609,11 @@ export const db = {
   // Preferences
   getPreferences() {
     const defaults = {
+      operationScale: 'household',
+      organizationName: '',
+      branchLocation: '',
+      wasteBudgetRs: 2000,
+      scaleConfigured: false,
       diet: 'veg',
       reminderLeadDays: 2,
       morningDigestEnabled: true,
@@ -580,6 +625,11 @@ export const db = {
     const row = stmt.get() as any;
     if (!row) return defaults;
     return {
+      operationScale: row.operationScale || 'household',
+      organizationName: row.organizationName || '',
+      branchLocation: row.branchLocation || '',
+      wasteBudgetRs: row.wasteBudgetRs !== null && row.wasteBudgetRs !== undefined ? Number(row.wasteBudgetRs) : 2000,
+      scaleConfigured: Boolean(row.scaleConfigured),
       diet: row.diet || 'veg',
       reminderLeadDays: row.reminderLeadDays || 2,
       morningDigestEnabled: Boolean(row.morningDigestEnabled),
@@ -594,17 +644,24 @@ export const db = {
 
     const stmt = sqliteDb.prepare(`
       INSERT OR REPLACE INTO preferences (
-        id, diet, reminderLeadDays, morningDigestEnabled, morningDigestTime, defaultStorage, updatedAt
+        id, operationScale, organizationName, branchLocation, wasteBudgetRs, scaleConfigured,
+        diet, reminderLeadDays, morningDigestEnabled, morningDigestTime, defaultStorage, updatedAt
       ) VALUES (
-        'default', @diet, @reminderLeadDays, @morningDigestEnabled, @morningDigestTime, @defaultStorage, @updatedAt
+        'default', @operationScale, @organizationName, @branchLocation, @wasteBudgetRs, @scaleConfigured,
+        @diet, @reminderLeadDays, @morningDigestEnabled, @morningDigestTime, @defaultStorage, @updatedAt
       )
     `);
     stmt.run({
-      diet: merged.diet,
-      reminderLeadDays: merged.reminderLeadDays,
+      operationScale: merged.operationScale || 'household',
+      organizationName: merged.organizationName ?? '',
+      branchLocation: merged.branchLocation ?? '',
+      wasteBudgetRs: merged.wasteBudgetRs !== undefined && !isNaN(Number(merged.wasteBudgetRs)) ? Number(merged.wasteBudgetRs) : 2000,
+      scaleConfigured: merged.scaleConfigured ? 1 : 0,
+      diet: merged.diet || 'veg',
+      reminderLeadDays: Number(merged.reminderLeadDays) || 2,
       morningDigestEnabled: merged.morningDigestEnabled ? 1 : 0,
-      morningDigestTime: merged.morningDigestTime,
-      defaultStorage: merged.defaultStorage,
+      morningDigestTime: merged.morningDigestTime || '08:30',
+      defaultStorage: merged.defaultStorage || 'fridge',
       updatedAt: new Date().toISOString(),
     });
     return merged;
@@ -625,6 +682,9 @@ export const db = {
     let unpricedUsedCount = 0;
     let unpricedExpiredCount = 0;
     let totalScansLogged = 0;
+    let lowStockCount = 0;
+    let totalActiveValueRs = 0;
+    let valueAtRiskRs = 0;
 
     for (const item of items) {
       if (item.source === 'barcode' || item.source === 'receipt') {
@@ -638,11 +698,24 @@ export const db = {
 
       if (item.status === 'active') {
         activeCount++;
+        if (item.parLevel !== null && item.parLevel !== undefined && Number(item.quantity) <= Number(item.parLevel)) {
+          lowStockCount++;
+        }
+
+        const remainingValue =
+          item.price !== null && !isNaN(item.price)
+            ? item.originalQuantity && item.originalQuantity > 0 && item.quantity < item.originalQuantity
+              ? Math.round(item.price * (item.quantity / item.originalQuantity))
+              : item.price
+            : 0;
+        totalActiveValueRs += remainingValue;
+
         const exp = new Date(item.estimatedExpiryDate);
         exp.setHours(0, 0, 0, 0);
         const diffDays = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
         if (diffDays <= 2) {
           urgentCount++;
+          valueAtRiskRs += remainingValue;
         } else {
           freshCount++;
         }
@@ -684,6 +757,9 @@ export const db = {
       savingPercentage,
       zeroWasteStreakDays,
       totalScansLogged,
+      lowStockCount,
+      totalActiveValueRs,
+      valueAtRiskRs,
     };
   },
 
@@ -827,6 +903,10 @@ function mapItem(row: any) {
     barcode: row.barcode || undefined,
     notes: row.notes || undefined,
     imageUrl: row.imageUrl || undefined,
+    batchCode: row.batchCode || undefined,
+    supplierName: row.supplierName || undefined,
+    parLevel: row.parLevel !== null && row.parLevel !== undefined ? Number(row.parLevel) : null,
+    branchZone: row.branchZone || undefined,
     createdAt: row.createdAt || undefined,
     updatedAt: row.updatedAt || undefined,
   };

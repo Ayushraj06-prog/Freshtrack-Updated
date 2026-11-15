@@ -44,6 +44,11 @@ interface InventoryContextType {
 }
 
 const DEFAULT_PREFS: UserPreferences = {
+  operationScale: 'household',
+  organizationName: '',
+  branchLocation: '',
+  wasteBudgetRs: 2000,
+  scaleConfigured: false,
   diet: 'veg',
   reminderLeadDays: 2,
   morningDigestEnabled: true,
@@ -352,6 +357,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const exportCsv = () => {
+    const isCommercial = preferences.operationScale !== 'household';
     const headers = [
       'ID',
       'Name',
@@ -365,6 +371,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       'Status',
       'Used At',
       'Source',
+      ...(isCommercial ? ['Batch Code', 'Supplier', 'Par Level', 'Branch/Zone', 'Reorder Needed'] : []),
     ];
 
     const rows = items.map((i) => [
@@ -380,6 +387,17 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       i.status,
       i.usedAt || 'N/A',
       i.source,
+      ...(isCommercial
+        ? [
+            `"${(i.batchCode || '').replace(/"/g, '""')}"`,
+            `"${(i.supplierName || '').replace(/"/g, '""')}"`,
+            i.parLevel ?? '',
+            `"${(i.branchZone || preferences.branchLocation || '').replace(/"/g, '""')}"`,
+            i.status === 'active' && i.parLevel !== null && i.parLevel !== undefined && i.quantity <= i.parLevel
+              ? 'YES'
+              : 'NO',
+          ]
+        : []),
     ]);
 
     const csvContent =
@@ -387,7 +405,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `freshtrack_inventory_${new Date().toISOString().split('T')[0]}.csv`);
+    const prefix = isCommercial ? `freshtrack_${preferences.operationScale}_audit` : 'freshtrack_inventory';
+    link.setAttribute('download', `${prefix}_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -405,6 +424,9 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     let unpricedUsedCount = 0;
     let unpricedExpiredCount = 0;
     let totalScansLogged = 0;
+    let lowStockCount = 0;
+    let totalActiveValueRs = 0;
+    let valueAtRiskRs = 0;
 
     for (const item of items) {
       if (item.source === 'barcode' || item.source === 'receipt') {
@@ -418,9 +440,22 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       if (item.status === 'active') {
         activeCount++;
+        if (item.parLevel !== null && item.parLevel !== undefined && Number(item.quantity) <= Number(item.parLevel)) {
+          lowStockCount++;
+        }
+
+        const remainingValue =
+          item.price !== null && !isNaN(item.price)
+            ? item.originalQuantity && item.originalQuantity > 0 && item.quantity < item.originalQuantity
+              ? Math.round(item.price * (item.quantity / item.originalQuantity))
+              : item.price
+            : 0;
+        totalActiveValueRs += remainingValue;
+
         const rem = getRemainingDays(item.estimatedExpiryDate);
         if (rem <= 2) {
           urgentCount++;
+          valueAtRiskRs += remainingValue;
         } else {
           freshCount++;
         }
@@ -462,6 +497,9 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       savingPercentage,
       zeroWasteStreakDays,
       totalScansLogged,
+      lowStockCount,
+      totalActiveValueRs,
+      valueAtRiskRs,
     };
   }, [items]);
 

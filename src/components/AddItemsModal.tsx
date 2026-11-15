@@ -219,7 +219,10 @@ function compressImage(
 }
 
 export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose }) => {
-  const { addItem, addMultipleItems } = useInventory();
+  const { addItem, addMultipleItems, preferences } = useInventory();
+
+  const isCommercial = preferences.operationScale !== 'household';
+  const isEnterprise = preferences.operationScale === 'enterprise';
 
   const [activeTab, setActiveTab] = useState<'photo-ocr' | 'receipt' | 'manual'>('photo-ocr');
 
@@ -255,6 +258,12 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
   const [manualPrice, setManualPrice] = useState('');
   const [manualDays, setManualDays] = useState(7);
   const [manualCustomDate, setManualCustomDate] = useState('');
+
+  // Commercial Parameters (Restaurant / Enterprise)
+  const [commercialBatchCode, setCommercialBatchCode] = useState('');
+  const [commercialSupplier, setCommercialSupplier] = useState('');
+  const [commercialParLevel, setCommercialParLevel] = useState('');
+  const [commercialBranchZone, setCommercialBranchZone] = useState(preferences.branchLocation || '');
 
   useEffect(() => {
     if (manualName.trim()) {
@@ -523,7 +532,11 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
       barcode: scannedProduct.barcode || null,
       imageUrl: scannedProduct.imageUrl || null,
       notes: scannedProduct.detectedText ? `OCR Detected: ${scannedProduct.detectedText}` : null,
-    });
+      batchCode: isCommercial && commercialBatchCode.trim() ? commercialBatchCode.trim() : null,
+      supplierName: isCommercial && commercialSupplier.trim() ? commercialSupplier.trim() : null,
+      parLevel: isCommercial && commercialParLevel ? Number(commercialParLevel) : null,
+      branchZone: isCommercial ? (commercialBranchZone.trim() || preferences.branchLocation || null) : null,
+    } as any);
 
     onClose();
   };
@@ -630,6 +643,7 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
       estimatedExpiryDate: calculateExpiryDate(item.estimatedExpiryDays),
       status: 'active' as const,
       source: 'receipt' as const,
+      branchZone: isCommercial ? (commercialBranchZone.trim() || preferences.branchLocation || null) : null,
     }));
 
     await addMultipleItems(toSave);
@@ -656,21 +670,36 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
       estimatedExpiryDate: expiry,
       status: 'active',
       source: 'manual',
+      batchCode: isCommercial && commercialBatchCode.trim() ? commercialBatchCode.trim() : null,
+      supplierName: isCommercial && commercialSupplier.trim() ? commercialSupplier.trim() : null,
+      parLevel: isCommercial && commercialParLevel ? parseFloat(commercialParLevel) : null,
+      branchZone: isCommercial ? (commercialBranchZone.trim() || preferences.branchLocation || null) : null,
     });
 
     onClose();
   };
 
-  const QUICK_STAPLES = [
-    { name: 'Milk Packet 500ml', cat: 'Dairy' as ItemCategory, unit: 'ml', qty: 500, days: 3, storage: 'fridge' as StorageLocation, price: 27 },
-    { name: 'Fresh Curd (Dahi) 400g', cat: 'Dairy' as ItemCategory, unit: 'g', qty: 400, days: 6, storage: 'fridge' as StorageLocation, price: 35 },
-    { name: 'Paneer 200g', cat: 'Dairy' as ItemCategory, unit: 'g', qty: 200, days: 5, storage: 'fridge' as StorageLocation, price: 85 },
-    { name: 'Dhaniya (Coriander)', cat: 'Leafy Greens' as ItemCategory, unit: 'bunch', qty: 1, days: 4, storage: 'fridge' as StorageLocation, price: 15 },
-    { name: 'Tomatoes 1kg', cat: 'Vegetables' as ItemCategory, unit: 'kg', qty: 1, days: 6, storage: 'fridge' as StorageLocation, price: 35 },
-    { name: 'Onions 1kg', cat: 'Vegetables' as ItemCategory, unit: 'kg', qty: 1, days: 21, storage: 'pantry' as StorageLocation, price: 35 },
-    { name: 'Brown Bread', cat: 'Bakery & Bread' as ItemCategory, unit: 'pack', qty: 1, days: 4, storage: 'pantry' as StorageLocation, price: 50 },
-    { name: 'Eggs 6pcs', cat: 'Eggs, Meat & Poultry' as ItemCategory, unit: 'pcs', qty: 6, days: 25, storage: 'fridge' as StorageLocation, price: 55 },
-  ];
+  const QUICK_STAPLES = isCommercial
+    ? [
+        { name: 'Paneer Block 5kg', cat: 'Dairy' as ItemCategory, unit: 'kg', qty: 5, days: 6, storage: 'fridge' as StorageLocation, price: 1650, par: 2 },
+        { name: 'Milk Crate 10L', cat: 'Dairy' as ItemCategory, unit: 'L', qty: 10, days: 3, storage: 'fridge' as StorageLocation, price: 540, par: 4 },
+        { name: 'Tomato Crate 10kg', cat: 'Vegetables' as ItemCategory, unit: 'kg', qty: 10, days: 5, storage: 'fridge' as StorageLocation, price: 360, par: 3 },
+        { name: 'Onion Sack 25kg', cat: 'Vegetables' as ItemCategory, unit: 'kg', qty: 25, days: 25, storage: 'pantry' as StorageLocation, price: 820, par: 5 },
+        { name: 'Chakki Atta 25kg', cat: 'Grains & Flours' as ItemCategory, unit: 'kg', qty: 25, days: 90, storage: 'pantry' as StorageLocation, price: 1050, par: 5 },
+        { name: 'Basmati Rice 25kg', cat: 'Grains & Flours' as ItemCategory, unit: 'kg', qty: 25, days: 180, storage: 'pantry' as StorageLocation, price: 2450, par: 5 },
+        { name: 'Cooking Oil 15L Tin', cat: 'Spices & Condiments' as ItemCategory, unit: 'L', qty: 15, days: 240, storage: 'pantry' as StorageLocation, price: 2100, par: 3 },
+        { name: 'Frozen Green Peas 5kg', cat: 'Vegetables' as ItemCategory, unit: 'kg', qty: 5, days: 90, storage: 'freezer' as StorageLocation, price: 580, par: 2 },
+      ]
+    : [
+        { name: 'Milk Packet 500ml', cat: 'Dairy' as ItemCategory, unit: 'ml', qty: 500, days: 3, storage: 'fridge' as StorageLocation, price: 27, par: 0 },
+        { name: 'Fresh Curd (Dahi) 400g', cat: 'Dairy' as ItemCategory, unit: 'g', qty: 400, days: 6, storage: 'fridge' as StorageLocation, price: 35, par: 0 },
+        { name: 'Paneer 200g', cat: 'Dairy' as ItemCategory, unit: 'g', qty: 200, days: 5, storage: 'fridge' as StorageLocation, price: 85, par: 0 },
+        { name: 'Dhaniya (Coriander)', cat: 'Leafy Greens' as ItemCategory, unit: 'bunch', qty: 1, days: 4, storage: 'fridge' as StorageLocation, price: 15, par: 0 },
+        { name: 'Tomatoes 1kg', cat: 'Vegetables' as ItemCategory, unit: 'kg', qty: 1, days: 6, storage: 'fridge' as StorageLocation, price: 35, par: 0 },
+        { name: 'Onions 1kg', cat: 'Vegetables' as ItemCategory, unit: 'kg', qty: 1, days: 21, storage: 'pantry' as StorageLocation, price: 35, par: 0 },
+        { name: 'Brown Bread', cat: 'Bakery & Bread' as ItemCategory, unit: 'pack', qty: 1, days: 4, storage: 'pantry' as StorageLocation, price: 50, par: 0 },
+        { name: 'Eggs 6pcs', cat: 'Eggs, Meat & Poultry' as ItemCategory, unit: 'pcs', qty: 6, days: 25, storage: 'fridge' as StorageLocation, price: 55, par: 0 },
+      ];
 
   if (!isOpen) return null;
 
@@ -1033,6 +1062,55 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                     />
                   </div>
 
+                  {isCommercial && (
+                    <div className="grid grid-cols-2 gap-2 text-xs pt-1 border-t border-stone-200">
+                      <div>
+                        <label className="font-bold text-stone-600 block mb-1">Batch / Lot Code</label>
+                        <input
+                          type="text"
+                          value={commercialBatchCode}
+                          onChange={(e) => setCommercialBatchCode(e.target.value)}
+                          placeholder="e.g. LOT-204"
+                          className="w-full p-2 bg-white border border-[#E2E8DE] rounded-lg font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-bold text-stone-600 block mb-1">Par Level (Min Stock)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={commercialParLevel}
+                          onChange={(e) => setCommercialParLevel(e.target.value)}
+                          placeholder="Reorder threshold"
+                          className="w-full p-2 bg-white border border-[#E2E8DE] rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-bold text-stone-600 block mb-1">Supplier</label>
+                        <input
+                          type="text"
+                          value={commercialSupplier}
+                          onChange={(e) => setCommercialSupplier(e.target.value)}
+                          placeholder="e.g. Metro Cash & Carry"
+                          className="w-full p-2 bg-white border border-[#E2E8DE] rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="font-bold text-stone-600 block mb-1">
+                          {isEnterprise ? 'Branch / Warehouse Zone' : 'Prep Station / Zone'}
+                        </label>
+                        <input
+                          type="text"
+                          value={commercialBranchZone}
+                          onChange={(e) => setCommercialBranchZone(e.target.value)}
+                          placeholder={preferences.branchLocation || 'Main Walk-In'}
+                          className="w-full p-2 bg-white border border-[#E2E8DE] rounded-lg"
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <button
                     type="button"
                     onClick={handleSaveScannedProduct}
@@ -1334,7 +1412,7 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <span className="text-[11px] font-bold text-stone-500 uppercase tracking-wider">
-                  Popular Indian Staples (1-Tap):
+                  {isCommercial ? 'Commercial Bulk Staples (1-Tap):' : 'Popular Indian Staples (1-Tap):'}
                 </span>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {QUICK_STAPLES.map((st) => (
@@ -1350,6 +1428,9 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                         setManualStorage(st.storage);
                         setManualDays(st.days);
                         setManualCustomDate(calculateExpiryDate(st.days));
+                        if (isCommercial && st.par > 0) {
+                          setCommercialParLevel(String(st.par));
+                        }
                       }}
                       className="p-2 text-left bg-stone-50 hover:bg-[#EAF3E6] border border-[#E2E8DE] hover:border-[#6B9B4F] rounded-xl transition-all cursor-pointer text-xs"
                     >
@@ -1368,7 +1449,7 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                     required
                     value={manualName}
                     onChange={(e) => setManualName(e.target.value)}
-                    placeholder="e.g. Dahi, Paneer, Methi, Bananas, Atta"
+                    placeholder={isCommercial ? 'e.g. Paneer Block 5kg, Cream 1L, Tomato Crate' : 'e.g. Dahi, Paneer, Methi, Bananas, Atta'}
                     className="w-full px-3.5 py-2 text-sm bg-white border border-[#E2E8DE] rounded-xl focus:ring-2 focus:ring-[#2C5F2D] focus:outline-none"
                   />
                 </div>
@@ -1430,6 +1511,7 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                       <option value="pack">pack</option>
                       <option value="pcs">pcs</option>
                       <option value="bunch">bunch</option>
+                      <option value="crate">crate</option>
                     </select>
                   </div>
                   <div>
@@ -1443,6 +1525,55 @@ export const AddItemsModal: React.FC<AddItemsModalProps> = ({ isOpen, onClose })
                     />
                   </div>
                 </div>
+
+                {isCommercial && (
+                  <div className="grid grid-cols-2 gap-2 text-xs bg-[#F7F8F4] p-3 rounded-2xl border border-[#E2E8DE]">
+                    <div>
+                      <label className="font-bold text-stone-700 block mb-1">Batch / Lot Code</label>
+                      <input
+                        type="text"
+                        value={commercialBatchCode}
+                        onChange={(e) => setCommercialBatchCode(e.target.value)}
+                        placeholder="e.g. LOT-204"
+                        className="w-full p-2 bg-white border border-[#E2E8DE] rounded-xl font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-bold text-stone-700 block mb-1">Par Level (Reorder)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={commercialParLevel}
+                        onChange={(e) => setCommercialParLevel(e.target.value)}
+                        placeholder="Min qty alert"
+                        className="w-full p-2 bg-white border border-[#E2E8DE] rounded-xl"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-bold text-stone-700 block mb-1">Supplier</label>
+                      <input
+                        type="text"
+                        value={commercialSupplier}
+                        onChange={(e) => setCommercialSupplier(e.target.value)}
+                        placeholder="e.g. Hyperpure / Metro"
+                        className="w-full p-2 bg-white border border-[#E2E8DE] rounded-xl"
+                      />
+                    </div>
+                    <div>
+                      <label className="font-bold text-stone-700 block mb-1">
+                        {isEnterprise ? 'Branch / Warehouse Zone' : 'Prep Station / Zone'}
+                      </label>
+                      <input
+                        type="text"
+                        value={commercialBranchZone}
+                        onChange={(e) => setCommercialBranchZone(e.target.value)}
+                        placeholder={preferences.branchLocation || 'Main Walk-In'}
+                        className="w-full p-2 bg-white border border-[#E2E8DE] rounded-xl"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div className="p-3 bg-[#F7F8F4] border border-[#E2E8DE] rounded-2xl space-y-2">
                   <div className="flex items-center justify-between text-xs">

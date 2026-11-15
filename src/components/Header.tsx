@@ -12,6 +12,9 @@ import {
   Leaf,
   Database,
   Download,
+  Home,
+  UtensilsCrossed,
+  Building2,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 
@@ -20,6 +23,7 @@ interface HeaderProps {
   setActiveTab: (tab: string) => void;
   onOpenMorningDigest: () => void;
   onOpenAddModal: () => void;
+  onOpenScaleModal: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -27,9 +31,17 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveTab,
   onOpenMorningDigest,
   onOpenAddModal,
+  onOpenScaleModal,
 }) => {
-  const { stats, notificationLog, dbConnected, dbInfo } = useInventory();
+  const { stats, notificationLog, dbConnected, dbInfo, preferences } = useInventory();
   const [showNotifications, setShowNotifications] = useState(false);
+
+  const scaleMeta =
+    preferences.operationScale === 'enterprise'
+      ? { label: 'Enterprise', icon: <Building2 className="w-3.5 h-3.5 text-amber-600" />, style: 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100' }
+      : preferences.operationScale === 'restaurant'
+      ? { label: 'Restaurant', icon: <UtensilsCrossed className="w-3.5 h-3.5 text-emerald-700" />, style: 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100' }
+      : { label: 'Household', icon: <Home className="w-3.5 h-3.5 text-[#2C5F2D]" />, style: 'bg-[#F7F8F4] text-stone-800 border-[#E2E8DE] hover:bg-[#EAF3E6]' };
 
   const handleDownloadZip = () => {
     window.location.href = '/api/download-zip';
@@ -55,14 +67,31 @@ export const Header: React.FC<HeaderProps> = ({
                 India
               </span>
             </div>
-            <p className="text-[11px] text-stone-500 font-medium -mt-0.5 hidden xs:block">
-              Zero Waste Kitchen &bull; ₹ Savings
+            <p className="text-[11px] text-stone-500 font-medium -mt-0.5 hidden xs:block truncate max-w-[170px]">
+              {preferences.organizationName
+                ? preferences.organizationName
+                : preferences.operationScale === 'enterprise'
+                ? 'Enterprise Ops • ₹ Valuation'
+                : preferences.operationScale === 'restaurant'
+                ? 'Commercial FIFO Kitchen'
+                : 'Zero Waste Kitchen • ₹ Savings'}
             </p>
           </div>
         </div>
 
         {/* Status Indicators & Download ZIP Button */}
         <div className="flex items-center gap-2">
+          {/* Operation Scale Switcher Pill */}
+          <button
+            type="button"
+            onClick={onOpenScaleModal}
+            title="Switch between Household, Restaurant, or Enterprise scale"
+            className={`px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer flex items-center gap-1.5 ${scaleMeta.style}`}
+          >
+            {scaleMeta.icon}
+            <span>{scaleMeta.label}</span>
+          </button>
+
           {/* SQLite DB Status */}
           <div
             onClick={() => setActiveTab('settings')}

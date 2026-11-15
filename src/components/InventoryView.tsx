@@ -16,6 +16,10 @@ import {
   PlusCircle,
   Package,
   UtensilsCrossed,
+  ArrowUpDown,
+  Download,
+  Building2,
+  RefreshCw,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays, SHELF_LIFE_DATABASE } from '../data/shelfLifeData';
@@ -29,26 +33,45 @@ interface InventoryViewProps {
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, setActiveTab }) => {
-  const { items, markAsUsed, deleteItem, updateItem } = useInventory();
+  const { items, markAsUsed, deleteItem, updateItem, preferences, stats, exportCsv } = useInventory();
+
+  const isCommercial = preferences.operationScale !== 'household';
+  const isEnterprise = preferences.operationScale === 'enterprise';
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStorage, setSelectedStorage] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<'active' | 'urgent' | 'used' | 'all'>('active');
+  const [selectedZone, setSelectedZone] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<'active' | 'urgent' | 'low-stock' | 'used' | 'all'>('active');
+  const [fifoSort, setFifoSort] = useState<boolean>(true);
 
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [usingItem, setUsingItem] = useState<InventoryItem | null>(null);
   const [isCustomRecipeOpen, setIsCustomRecipeOpen] = useState(false);
   const [customRecipeItemId, setCustomRecipeItemId] = useState<string | null>(null);
 
-  // Filter items
+  const availableZones = useMemo(() => {
+    const zones = new Set<string>();
+    items.forEach((i) => {
+      if (i.branchZone) zones.add(i.branchZone);
+    });
+    if (preferences.branchLocation) zones.add(preferences.branchLocation);
+    return Array.from(zones);
+  }, [items, preferences.branchLocation]);
+
+  // Filter & FIFO sort items
   const filteredItems = useMemo(() => {
-    return items.filter((item) => {
+    const filtered = items.filter((item) => {
       // Storage filter
       if (selectedStorage !== 'all' && item.storage !== selectedStorage) return false;
 
       // Category filter
       if (selectedCategory !== 'all' && item.category !== selectedCategory) return false;
+
+      // Branch / Zone filter
+      if (selectedZone !== 'all' && (item.branchZone || preferences.branchLocation || 'Main Kitchen') !== selectedZone) {
+        return false;
+      }
 
       // Status filter
       if (selectedStatus === 'active' && item.status !== 'active') return false;
@@ -58,6 +81,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, se
         const days = getRemainingDays(item.estimatedExpiryDate);
         if (days > 2) return false;
       }
+      if (selectedStatus === 'low-stock') {
+        if (item.status !== 'active') return false;
+        if (item.parLevel === null || item.parLevel === undefined || Number(item.quantity) > Number(item.parLevel)) {
+          return false;
+        }
+      }
 
       // Search query
       if (searchQuery.trim()) {
@@ -65,13 +94,31 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, se
         return (
           item.name.toLowerCase().includes(q) ||
           item.category.toLowerCase().includes(q) ||
-          (item.barcode && item.barcode.includes(q))
+          (item.barcode && item.barcode.includes(q)) ||
+          (item.batchCode && item.batchCode.toLowerCase().includes(q)) ||
+          (item.supplierName && item.supplierName.toLowerCase().includes(q)) ||
+          (item.branchZone && item.branchZone.toLowerCase().includes(q))
         );
       }
 
       return true;
     });
-  }, [items, selectedStorage, selectedCategory, selectedStatus, searchQuery]);
+
+    if (isCommercial && fifoSort) {
+      return [...filtered].sort((a, b) => a.estimatedExpiryDate.localeCompare(b.estimatedExpiryDate));
+    }
+    return filtered;
+  }, [
+    items,
+    selectedStorage,
+    selectedCategory,
+    selectedZone,
+    selectedStatus,
+    searchQuery,
+    isCommercial,
+    fifoSort,
+    preferences.branchLocation,
+  ]);
 
   return (
     <div className="space-y-5 pb-24">
@@ -113,10 +160,77 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, se
             className="px-4 py-2.5 bg-[#2C5F2D] hover:bg-[#204721] text-white text-xs font-bold rounded-2xl shadow-md shadow-[#2C5F2D]/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
           >
             <PlusCircle className="w-4 h-4" />
-            <span>Add Kitchen Items</span>
+            <span>{isCommercial ? 'Add Stock / Batch' : 'Add Kitchen Items'}</span>
           </button>
         </div>
       </div>
+
+      {/* Commercial Operations Strip (Restaurant & Enterprise) */}
+      {isCommercial && (
+        <div className="bg-white border border-[#E2E8DE] rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2.5 text-xs shadow-2xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setFifoSort((v) => !v)}
+              className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                fifoSort
+                  ? 'bg-[#2C5F2D] text-white shadow-xs'
+                  : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+              }`}
+            >
+              <ArrowUpDown className="w-3.5 h-3.5" />
+              <span>FIFO Priority: {fifoSort ? 'ON' : 'OFF'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedStatus(selectedStatus === 'low-stock' ? 'active' : 'low-stock')}
+              className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                selectedStatus === 'low-stock'
+                  ? 'bg-rose-600 text-white shadow-xs'
+                  : 'bg-rose-50 text-rose-800 border border-rose-200 hover:bg-rose-100'
+              }`}
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Low Stock ({stats.lowStockCount ?? 0})</span>
+            </button>
+
+            {isEnterprise && (
+              <div className="flex items-center gap-1.5 bg-stone-50 border border-[#E2E8DE] rounded-xl px-2.5 py-1">
+                <Building2 className="w-3.5 h-3.5 text-[#2C5F2D]" />
+                <select
+                  value={selectedZone}
+                  onChange={(e) => setSelectedZone(e.target.value)}
+                  className="bg-transparent text-xs font-semibold text-stone-700 focus:outline-none"
+                >
+                  <option value="all">All Zones / Branches</option>
+                  {availableZones.map((z) => (
+                    <option key={z} value={z}>
+                      {z}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 ml-auto">
+            {isEnterprise && (
+              <span className="px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 font-bold text-[11px]">
+                At Risk (≤48h): ₹{(stats.valueAtRiskRs ?? 0).toLocaleString('en-IN')}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={exportCsv}
+              className="px-3 py-1.5 rounded-xl bg-[#EAF3E6] hover:bg-[#d8ebd1] text-[#2C5F2D] font-bold flex items-center gap-1.5 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{isEnterprise ? 'FSSAI / Reorder CSV' : 'Export Stock CSV'}</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Storage Filter Pills */}
       <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
@@ -180,12 +294,18 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, se
       {/* Item List Cards */}
       {filteredItems.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {filteredItems.map((item) => {
+          {filteredItems.map((item, idx) => {
             const remDays = getRemainingDays(item.estimatedExpiryDate);
             const isUsed = item.status === 'used';
             const isExpired = item.status === 'expired';
             const isUrgent = item.status === 'active' && remDays <= 2;
             const isWarning = item.status === 'active' && remDays > 2 && remDays <= 4;
+            const isBelowPar =
+              item.status === 'active' &&
+              item.parLevel !== null &&
+              item.parLevel !== undefined &&
+              Number(item.quantity) <= Number(item.parLevel);
+            const isFifoFirst = isCommercial && fifoSort && item.status === 'active' && idx === 0;
 
             return (
               <div
@@ -219,15 +339,25 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, se
 
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
+                          {isFifoFirst && (
+                            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500 text-white">
+                              #1 Use First (FIFO)
+                            </span>
+                          )}
+                          {isBelowPar && (
+                            <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300">
+                              Low Stock • Par {item.parLevel}
+                            </span>
+                          )}
                           <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-stone-100 text-stone-600">
                             {item.category}
                           </span>
                           <span className="text-[10px] font-semibold text-stone-500 capitalize">
                             &bull; {item.storage}
                           </span>
-                          {item.source && (
-                            <span className="text-[10px] text-stone-400 capitalize">
-                              &bull; {item.source}
+                          {isCommercial && item.branchZone && (
+                            <span className="text-[10px] font-bold text-[#2C5F2D] bg-[#EAF3E6] px-1.5 py-0.5 rounded">
+                              {item.branchZone}
                             </span>
                           )}
                         </div>
@@ -236,7 +366,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, se
                           {item.name}
                         </h3>
 
-                        <div className="flex items-center gap-2 mt-0.5 text-xs text-stone-600">
+                        <div className="flex items-center gap-2 mt-0.5 text-xs text-stone-600 flex-wrap">
                           <span className="font-bold text-stone-800">
                             {item.quantity} {item.unit}
                           </span>
@@ -245,6 +375,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, se
                               <span>&bull;</span>
                               <span className="font-bold text-[#2C5F2D]">₹{item.price}</span>
                             </>
+                          )}
+                          {isCommercial && item.batchCode && (
+                            <span className="text-[10px] font-mono bg-stone-100 px-1.5 py-0.5 rounded text-stone-600">
+                              Lot: {item.batchCode}
+                            </span>
+                          )}
+                          {isCommercial && item.supplierName && (
+                            <span className="text-[10px] text-stone-500">
+                              &bull; {item.supplierName}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -439,6 +579,60 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ onOpenAddModal, se
                   <option value="freezer">Freezer 🧊</option>
                 </select>
               </div>
+
+              {isCommercial && (
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-stone-100">
+                  <div>
+                    <label className="font-bold text-stone-700 block mb-1">Batch / Lot Code</label>
+                    <input
+                      type="text"
+                      value={editingItem.batchCode || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, batchCode: e.target.value })}
+                      placeholder="e.g. LOT-204"
+                      className="w-full p-2 bg-stone-50 border border-stone-200 rounded-xl font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-stone-700 block mb-1">Par Level (Reorder)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={editingItem.parLevel ?? ''}
+                      onChange={(e) =>
+                        setEditingItem({
+                          ...editingItem,
+                          parLevel: e.target.value ? Number(e.target.value) : null,
+                        })
+                      }
+                      placeholder="Min qty"
+                      className="w-full p-2 bg-stone-50 border border-stone-200 rounded-xl"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-stone-700 block mb-1">Supplier</label>
+                    <input
+                      type="text"
+                      value={editingItem.supplierName || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, supplierName: e.target.value })}
+                      placeholder="e.g. Metro Cash & Carry"
+                      className="w-full p-2 bg-stone-50 border border-stone-200 rounded-xl"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-stone-700 block mb-1">
+                      {isEnterprise ? 'Branch / Warehouse Zone' : 'Prep Station / Zone'}
+                    </label>
+                    <input
+                      type="text"
+                      value={editingItem.branchZone || ''}
+                      onChange={(e) => setEditingItem({ ...editingItem, branchZone: e.target.value })}
+                      placeholder={preferences.branchLocation || 'Main Walk-In'}
+                      className="w-full p-2 bg-stone-50 border border-stone-200 rounded-xl"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2 pt-2">

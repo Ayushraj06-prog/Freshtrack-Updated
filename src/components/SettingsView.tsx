@@ -16,12 +16,21 @@ import {
   Cpu,
   FolderArchive,
   Terminal,
+  Home,
+  UtensilsCrossed,
+  Building2,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { aiService, AiStatus } from '../services/aiService';
+import { OperationScale } from '../types/inventory';
 import { runReceiptParserTests } from '../utils/receiptParser';
 
-export const SettingsView: React.FC = () => {
+interface SettingsViewProps {
+  onOpenScaleModal?: () => void;
+}
+
+export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenScaleModal }) => {
   const {
     preferences,
     updatePreferences,
@@ -61,11 +70,143 @@ export const SettingsView: React.FC = () => {
       {/* Title */}
       <div>
         <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight text-stone-900">
-          Database &amp; Project Controls
+          Operation Scale, Database &amp; Controls
         </h2>
         <p className="text-xs text-stone-500 mt-1">
-          Full persistent SQLite backend, complete project download, Gemini AI status, and Indian receipt test suite.
+          Configure Household, Restaurant, or Enterprise mode, SQLite backend diagnostics, project download, and receipt test suite.
         </p>
+      </div>
+
+      {/* 0. OPERATION SCALE & TIER PARAMETERS SECTION */}
+      <div className="bg-white rounded-3xl p-5 border border-[#6B9B4F]/40 shadow-xs space-y-4">
+        <div className="flex items-center justify-between pb-2 border-b border-stone-100">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="w-4 h-4 text-[#2C5F2D]" />
+            <h3 className="font-extrabold text-sm text-stone-900">
+              Operation Scale (Household / Restaurant / Enterprise)
+            </h3>
+          </div>
+          {onOpenScaleModal && (
+            <button
+              type="button"
+              onClick={onOpenScaleModal}
+              className="text-[11px] font-bold text-[#2C5F2D] hover:underline cursor-pointer"
+            >
+              Open Full Mode Wizard &rarr;
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+          {(
+            [
+              {
+                id: 'household' as OperationScale,
+                title: 'Household',
+                desc: 'Family savings, Fridge/Pantry, Rasoi recipes',
+                icon: <Home className="w-4 h-4" />,
+                defaultBudget: 1500,
+                defaultLead: 2,
+              },
+              {
+                id: 'restaurant' as OperationScale,
+                title: 'Restaurant',
+                desc: 'FIFO priority, Par-level alerts, 5x–25x prep yields',
+                icon: <UtensilsCrossed className="w-4 h-4" />,
+                defaultBudget: 15000,
+                defaultLead: 3,
+              },
+              {
+                id: 'enterprise' as OperationScale,
+                title: 'Enterprise',
+                desc: 'Multi-branch zones, Stock ₹ at risk, FSSAI CSV',
+                icon: <Building2 className="w-4 h-4" />,
+                defaultBudget: 50000,
+                defaultLead: 5,
+              },
+            ] as const
+          ).map((tier) => {
+            const active = preferences.operationScale === tier.id;
+            return (
+              <button
+                key={tier.id}
+                type="button"
+                onClick={() =>
+                  updatePreferences({
+                    operationScale: tier.id,
+                    wasteBudgetRs: tier.defaultBudget,
+                    reminderLeadDays: tier.defaultLead,
+                    scaleConfigured: true,
+                  })
+                }
+                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                  active
+                    ? 'bg-[#EAF3E6] border-[#2C5F2D] ring-1 ring-[#2C5F2D]'
+                    : 'bg-stone-50 border-stone-200 hover:bg-stone-100'
+                }`}
+              >
+                <div className="flex items-center gap-2 font-extrabold text-stone-900">
+                  <span className={active ? 'text-[#2C5F2D]' : 'text-stone-500'}>{tier.icon}</span>
+                  <span>{tier.title}</span>
+                </div>
+                <p className="text-[11px] text-stone-500 mt-1 leading-snug">{tier.desc}</p>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs pt-1">
+          <div>
+            <label className="font-bold text-stone-700 block mb-1">
+              {preferences.operationScale === 'household'
+                ? 'Kitchen Name'
+                : preferences.operationScale === 'restaurant'
+                ? 'Restaurant Name'
+                : 'Enterprise Group Name'}
+            </label>
+            <input
+              type="text"
+              value={preferences.organizationName || ''}
+              onChange={(e) => updatePreferences({ organizationName: e.target.value, scaleConfigured: true })}
+              placeholder={
+                preferences.operationScale === 'household' ? 'e.g. Sharma Kitchen' : 'e.g. Spice Route Hospitality'
+              }
+              className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-[#2C5F2D] focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="font-bold text-stone-700 block mb-1">
+              {preferences.operationScale === 'enterprise'
+                ? 'Default Branch / Warehouse'
+                : 'Primary Station / Zone'}
+            </label>
+            <input
+              type="text"
+              value={preferences.branchLocation || ''}
+              onChange={(e) => updatePreferences({ branchLocation: e.target.value, scaleConfigured: true })}
+              placeholder={preferences.operationScale === 'household' ? 'Home Kitchen' : 'e.g. Central Walk-In'}
+              className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-[#2C5F2D] focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="font-bold text-stone-700 block mb-1">Monthly Waste Cap (₹)</label>
+            <input
+              type="number"
+              min="0"
+              step="100"
+              value={preferences.wasteBudgetRs ?? 2000}
+              onChange={(e) =>
+                updatePreferences({
+                  wasteBudgetRs: Math.max(0, Number(e.target.value) || 0),
+                  scaleConfigured: true,
+                })
+              }
+              className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl font-bold focus:ring-2 focus:ring-[#2C5F2D] focus:outline-none"
+            />
+          </div>
+        </div>
       </div>
 
       {/* 1. DOWNLOAD COMPLETE PROJECT ZIP CARD (Prominent) */}
@@ -195,26 +336,19 @@ export const SettingsView: React.FC = () => {
               </span>
             </div>
             <div className="flex items-center gap-1.5 bg-stone-100 p-1 rounded-xl">
-              <button
-                onClick={() => updatePreferences({ reminderLeadDays: 1 })}
-                className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
-                  preferences.reminderLeadDays === 1
-                    ? 'bg-[#2C5F2D] text-white shadow-xs'
-                    : 'text-stone-600 hover:text-stone-900'
-                }`}
-              >
-                1 Day Before
-              </button>
-              <button
-                onClick={() => updatePreferences({ reminderLeadDays: 2 })}
-                className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
-                  preferences.reminderLeadDays === 2
-                    ? 'bg-[#2C5F2D] text-white shadow-xs'
-                    : 'text-stone-600 hover:text-stone-900'
-                }`}
-              >
-                2 Days Before
-              </button>
+              {[1, 2, 3, 7].map((days) => (
+                <button
+                  key={days}
+                  onClick={() => updatePreferences({ reminderLeadDays: days })}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    preferences.reminderLeadDays === days
+                      ? 'bg-[#2C5F2D] text-white shadow-xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                >
+                  {days}d Before
+                </button>
+              ))}
             </div>
           </div>
 

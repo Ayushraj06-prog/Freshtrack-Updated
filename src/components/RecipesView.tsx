@@ -49,6 +49,8 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
   // Custom Recipe Modal state
   const [isCustomModalOpen, setIsCustomModalOpen] = useState(false);
   const [recipeTab, setRecipeTab] = useState<'all' | 'expiring' | 'custom'>('all');
+  const [batchMultiplier, setBatchMultiplier] = useState<number>(1);
+  const isCommercial = preferences.operationScale !== 'household';
 
   // Expiring items in the kitchen (within 3 days)
   const expiringActiveItems = useMemo(() => {
@@ -671,8 +673,39 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
             <div className="p-5 overflow-y-auto space-y-4 text-xs">
               <p className="text-stone-600 leading-relaxed">{selectedRecipe.description}</p>
 
+              {isCommercial && (
+                <div className="p-3 rounded-2xl bg-[#EAF3E6] border border-[#6B9B4F]/40 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-extrabold text-[#2C5F2D] block">
+                      Commercial Prep Batch Multiplier
+                    </span>
+                    <span className="text-[11px] text-stone-600">
+                      Yields {selectedRecipe.servings * batchMultiplier} servings ({batchMultiplier}x batch)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-[#E2E8DE]">
+                    {[1, 5, 10, 25].map((mult) => (
+                      <button
+                        key={mult}
+                        type="button"
+                        onClick={() => setBatchMultiplier(mult)}
+                        className={`px-2.5 py-1 rounded-lg font-extrabold transition-all cursor-pointer ${
+                          batchMultiplier === mult
+                            ? 'bg-[#2C5F2D] text-white'
+                            : 'text-stone-600 hover:bg-stone-100'
+                        }`}
+                      >
+                        {mult}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
-                <h4 className="font-bold text-stone-900 text-sm mb-2">Ingredients Needed</h4>
+                <h4 className="font-bold text-stone-900 text-sm mb-2">
+                  Ingredients Needed {isCommercial && batchMultiplier > 1 ? `(${batchMultiplier}x Batch)` : ''}
+                </h4>
                 <div className="space-y-1.5 bg-stone-50 p-3 rounded-2xl border border-stone-200">
                   {selectedRecipe.allIngredients.map((ing, idx) => (
                     <div
@@ -683,7 +716,12 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
                         <Check className="w-3.5 h-3.5 text-[#2C5F2D]" />
                         {ing.name}
                       </span>
-                      {ing.amount && <span className="text-stone-500 font-semibold">{ing.amount}</span>}
+                      {ing.amount && (
+                        <span className="text-stone-500 font-semibold">
+                          {ing.amount}
+                          {isCommercial && batchMultiplier > 1 ? ` × ${batchMultiplier}` : ''}
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>

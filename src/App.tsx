@@ -10,8 +10,12 @@ import {
   UtensilsCrossed,
   Settings,
   Plus,
+  Home,
+  Building2,
+  SlidersHorizontal,
+  X,
 } from 'lucide-react';
-import { InventoryProvider } from './context/InventoryContext';
+import { InventoryProvider, useInventory } from './context/InventoryContext';
 import { Header } from './components/Header';
 import { DashboardView } from './components/DashboardView';
 import { InventoryView } from './components/InventoryView';
@@ -19,11 +23,26 @@ import { RecipesView } from './components/RecipesView';
 import { SettingsView } from './components/SettingsView';
 import { AddItemsModal } from './components/AddItemsModal';
 import { MorningDigestModal } from './components/MorningDigestModal';
+import { ScaleSelectorModal } from './components/ScaleSelectorModal';
+import { OperationScale } from './types/inventory';
 
 function MainApp() {
+  const { preferences, updatePreferences, dbConnected } = useInventory();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'recipes' | 'settings'>('inventory');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isDigestOpen, setIsDigestOpen] = useState(false);
+  const [isScaleModalOpen, setIsScaleModalOpen] = useState(false);
+
+  const handleQuickScaleSelect = async (scale: OperationScale) => {
+    const defaultBudget = scale === 'enterprise' ? 50000 : scale === 'restaurant' ? 15000 : 1500;
+    const defaultLead = scale === 'enterprise' ? 5 : scale === 'restaurant' ? 3 : 2;
+    await updatePreferences({
+      operationScale: scale,
+      wasteBudgetRs: defaultBudget,
+      reminderLeadDays: defaultLead,
+      scaleConfigured: true,
+    });
+  };
 
   return (
     <div className="min-h-screen bg-[#F4F6F0] text-stone-900 font-sans flex flex-col selection:bg-[#2C5F2D] selection:text-white">
@@ -33,6 +52,7 @@ function MainApp() {
         setActiveTab={(t) => setActiveTab(t as any)}
         onOpenMorningDigest={() => setIsDigestOpen(true)}
         onOpenAddModal={() => setIsAddModalOpen(true)}
+        onOpenScaleModal={() => setIsScaleModalOpen(true)}
       />
 
       {/* Main Tab Navigation for Desktop */}
@@ -48,7 +68,13 @@ function MainApp() {
               }`}
             >
               <Refrigerator className="w-4 h-4" />
-              <span>Kitchen Inventory</span>
+              <span>
+                {preferences.operationScale === 'enterprise'
+                  ? 'Multi-Branch Stock'
+                  : preferences.operationScale === 'restaurant'
+                  ? 'Commercial Stock (FIFO)'
+                  : 'Kitchen Inventory'}
+              </span>
             </button>
 
             <button
@@ -60,7 +86,11 @@ function MainApp() {
               }`}
             >
               <LayoutDashboard className="w-4 h-4" />
-              <span>₹ Savings &amp; Analytics</span>
+              <span>
+                {preferences.operationScale === 'household'
+                  ? '₹ Savings & Analytics'
+                  : '₹ Ops & Waste Analytics'}
+              </span>
             </button>
 
             <button
@@ -72,7 +102,11 @@ function MainApp() {
               }`}
             >
               <UtensilsCrossed className="w-4 h-4" />
-              <span>Rasoi Zero-Waste Recipes</span>
+              <span>
+                {preferences.operationScale === 'household'
+                  ? 'Rasoi Zero-Waste Recipes'
+                  : 'Prep & Batch Recipes'}
+              </span>
             </button>
 
             <button
@@ -84,14 +118,95 @@ function MainApp() {
               }`}
             >
               <Settings className="w-4 h-4" />
-              <span>SQLite DB &amp; Settings</span>
+              <span>Scale, DB &amp; Settings</span>
             </button>
           </nav>
         </div>
       </div>
 
       {/* Main Content Area */}
-      <main className="max-w-6xl mx-auto px-4 w-full pt-4 flex-1">
+      <main className="max-w-6xl mx-auto px-4 w-full pt-4 flex-1 space-y-4">
+        {/* Operation Scale Selection Section (shown until user confirms or configures their mode) */}
+        {dbConnected && !preferences.scaleConfigured && (
+          <section className="bg-white border border-[#6B9B4F]/50 rounded-3xl p-4 sm:p-5 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#EAF3E6] text-[#2C5F2D]">
+                  Tailor Your Workspace
+                </span>
+                <h2 className="text-base sm:text-lg font-extrabold text-stone-900 mt-1">
+                  Are you using FreshTrack for a Household, Restaurant, or Enterprise?
+                </h2>
+                <p className="text-xs text-stone-500">
+                  Pick your scale to unlock FIFO queues, Par-Level reorder alerts, Batch tracking, or Multi-Branch analytics.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 self-start sm:self-center">
+                <button
+                  type="button"
+                  onClick={() => setIsScaleModalOpen(true)}
+                  className="px-3 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>Full Setup</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updatePreferences({ scaleConfigured: true })}
+                  aria-label="Dismiss scale banner"
+                  className="p-1.5 rounded-xl text-stone-400 hover:text-stone-700 hover:bg-stone-100 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+              <button
+                type="button"
+                onClick={() => handleQuickScaleSelect('household')}
+                className="p-3 rounded-2xl border border-[#E2E8DE] hover:border-[#2C5F2D] hover:bg-[#EAF3E6]/60 text-left transition-all cursor-pointer flex items-start gap-3"
+              >
+                <div className="w-9 h-9 rounded-xl bg-[#EAF3E6] text-[#2C5F2D] flex items-center justify-center shrink-0">
+                  <Home className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="font-extrabold text-stone-900">Household Kitchen</p>
+                  <p className="text-[11px] text-stone-500 mt-0.5">Home fridge, family meal savings &amp; Rasoi recipes</p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleQuickScaleSelect('restaurant')}
+                className="p-3 rounded-2xl border border-[#E2E8DE] hover:border-[#2C5F2D] hover:bg-[#EAF3E6]/60 text-left transition-all cursor-pointer flex items-start gap-3"
+              >
+                <div className="w-9 h-9 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0">
+                  <UtensilsCrossed className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="font-extrabold text-stone-900">Restaurant / Cafe</p>
+                  <p className="text-[11px] text-stone-500 mt-0.5">FIFO queue, Par-level alerts, batches &amp; 5x-25x prep yields</p>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleQuickScaleSelect('enterprise')}
+                className="p-3 rounded-2xl border border-[#E2E8DE] hover:border-[#2C5F2D] hover:bg-amber-50/70 text-left transition-all cursor-pointer flex items-start gap-3"
+              >
+                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                  <Building2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="font-extrabold text-stone-900">Enterprise / Multi-Branch</p>
+                  <p className="text-[11px] text-stone-500 mt-0.5">Multi-zone stock, ₹ valuation at risk &amp; FSSAI CSV audit</p>
+                </div>
+              </button>
+            </div>
+          </section>
+        )}
+
         {activeTab === 'inventory' && (
           <InventoryView
             onOpenAddModal={() => setIsAddModalOpen(true)}
@@ -102,10 +217,11 @@ function MainApp() {
           <DashboardView
             setActiveTab={(t) => setActiveTab(t as any)}
             onOpenAddModal={() => setIsAddModalOpen(true)}
+            onOpenScaleModal={() => setIsScaleModalOpen(true)}
           />
         )}
         {activeTab === 'recipes' && <RecipesView />}
-        {activeTab === 'settings' && <SettingsView />}
+        {activeTab === 'settings' && <SettingsView onOpenScaleModal={() => setIsScaleModalOpen(true)} />}
       </main>
 
       {/* Mobile Floating Add Button */}
@@ -132,7 +248,7 @@ function MainApp() {
           className={`flex flex-col items-center gap-1 ${activeTab === 'dashboard' ? 'text-[#2C5F2D]' : ''}`}
         >
           <LayoutDashboard className="w-5 h-5" />
-          <span>Savings</span>
+          <span>Analytics</span>
         </button>
 
         <button
@@ -162,6 +278,11 @@ function MainApp() {
         isOpen={isDigestOpen}
         onClose={() => setIsDigestOpen(false)}
         setActiveTab={(t) => setActiveTab(t as any)}
+      />
+
+      <ScaleSelectorModal
+        isOpen={isScaleModalOpen}
+        onClose={() => setIsScaleModalOpen(false)}
       />
     </div>
   );

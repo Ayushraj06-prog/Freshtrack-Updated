@@ -12,9 +12,13 @@ import {
   PlusCircle,
   Download,
   Flame,
-  CheckCircle2,
   Package,
   Layers,
+  Building2,
+  ClipboardCheck,
+  SlidersHorizontal,
+  IndianRupee,
+  RefreshCw,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays } from '../data/shelfLifeData';
@@ -24,15 +28,32 @@ import { UseItemModal } from './UseItemModal';
 interface DashboardViewProps {
   setActiveTab: (tab: string) => void;
   onOpenAddModal: () => void;
+  onOpenScaleModal?: () => void;
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOpenAddModal }) => {
-  const { items, stats, markAsUsed, dbInfo } = useInventory();
+export const DashboardView: React.FC<DashboardViewProps> = ({
+  setActiveTab,
+  onOpenAddModal,
+  onOpenScaleModal,
+}) => {
+  const { items, stats, markAsUsed, dbInfo, preferences, exportCsv } = useInventory();
   const [usingItem, setUsingItem] = useState<InventoryItem | null>(null);
+
+  const scale = preferences.operationScale || 'household';
+  const isCommercial = scale !== 'household';
+  const isEnterprise = scale === 'enterprise';
 
   const urgentItems = items
     .filter((i) => i.status === 'active' && getRemainingDays(i.estimatedExpiryDate) <= 2)
     .sort((a, b) => (a.estimatedExpiryDate > b.estimatedExpiryDate ? 1 : -1));
+
+  const lowStockItems = items.filter(
+    (i) =>
+      i.status === 'active' &&
+      i.parLevel !== null &&
+      i.parLevel !== undefined &&
+      Number(i.quantity) <= Number(i.parLevel)
+  );
 
   // Category breakdown
   const categoryCounts = items
@@ -42,6 +63,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
       return acc;
     }, {} as Record<string, number>);
 
+  // Branch/Zone & Supplier breakdown for Enterprise/Restaurant
+  const zoneCounts = items
+    .filter((i) => i.status === 'active')
+    .reduce((acc, item) => {
+      const zone = item.branchZone || preferences.branchLocation || 'Main Kitchen';
+      acc[zone] = (acc[zone] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+  const wasteBudget = preferences.wasteBudgetRs || (isEnterprise ? 50000 : isCommercial ? 15000 : 1500);
+  const wastePercent = wasteBudget > 0 ? Math.min(100, Math.round((stats.moneyWastedRs / wasteBudget) * 100)) : 0;
+
   return (
     <div className="space-y-6 pb-24">
       {/* Top Welcome / Hero Banner */}
@@ -50,29 +83,57 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
 
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[11px] font-bold backdrop-blur-xs">
-                Zero-Waste Indian Kitchen
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[11px] font-bold backdrop-blur-xs capitalize">
+                {scale === 'enterprise'
+                  ? '🏢 Enterprise Multi-Branch Ops'
+                  : scale === 'restaurant'
+                  ? '🍽️ Restaurant Commercial Kitchen'
+                  : '🏠 Household Zero-Waste Kitchen'}
               </span>
+              {preferences.organizationName && (
+                <span className="px-2.5 py-0.5 rounded-full bg-[#A3E635]/20 text-[#A3E635] text-[11px] font-bold border border-[#A3E635]/30">
+                  {preferences.organizationName}
+                </span>
+              )}
               <span className="text-white/80 text-xs font-semibold">
                 ● SQLite DB: {dbInfo?.itemsCount ?? 0} items tracked
               </span>
             </div>
+
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              Total Household Savings: ₹{stats.moneySavedRs.toLocaleString('en-IN')}
+              {isEnterprise
+                ? `Active Stock Valuation: ₹${(stats.totalActiveValueRs ?? 0).toLocaleString('en-IN')}`
+                : isCommercial
+                ? `Kitchen Margin Saved: ₹${stats.moneySavedRs.toLocaleString('en-IN')}`
+                : `Total Household Savings: ₹${stats.moneySavedRs.toLocaleString('en-IN')}`}
             </h1>
             <p className="text-xs sm:text-sm text-white/80 max-w-xl leading-relaxed">
-              Every vegetable and grocery item marked as consumed prevents waste and adds directly to your household monthly savings.
+              {isEnterprise
+                ? `Monitoring ${Object.keys(zoneCounts).length} branch/warehouse zone(s), FIFO spoilage risk, par-level reorders, and FSSAI compliance logs.`
+                : isCommercial
+                ? 'FIFO prep prioritization, par-level reorder alerts, and batch waste cap monitoring tailored for commercial kitchens.'
+                : 'Every vegetable and grocery item marked as consumed prevents waste and adds directly to your household monthly savings.'}
             </p>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {onOpenScaleModal && (
+              <button
+                onClick={onOpenScaleModal}
+                className="px-3.5 py-2.5 rounded-2xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold border border-white/20 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <SlidersHorizontal className="w-4 h-4 text-[#A3E635]" />
+                <span>Switch Scale</span>
+              </button>
+            )}
+
             <button
               onClick={onOpenAddModal}
               className="px-4 py-2.5 rounded-2xl bg-[#A3E635] text-[#2C5F2D] hover:bg-[#b5f548] text-xs font-extrabold shadow-md active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
             >
               <PlusCircle className="w-4 h-4" />
-              <span>Add Items</span>
+              <span>{isCommercial ? 'Add Stock / Batch' : 'Add Items'}</span>
             </button>
 
             <button
@@ -80,7 +141,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
               className="px-4 py-2.5 rounded-2xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold border border-white/20 backdrop-blur-xs active:scale-95 transition-all flex items-center gap-2 cursor-pointer"
             >
               <Utensils className="w-4 h-4" />
-              <span>Cook Ideas</span>
+              <span>{isCommercial ? 'Batch Prep' : 'Cook Ideas'}</span>
             </button>
           </div>
         </div>
@@ -89,47 +150,187 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-6 pt-5 border-t border-white/15">
           <div className="bg-white/10 p-3.5 rounded-2xl backdrop-blur-xs">
             <div className="flex items-center justify-between text-white/70 text-xs font-medium">
-              <span>Money Saved</span>
+              <span>{isCommercial ? 'Cost Recovered' : 'Money Saved'}</span>
               <TrendingUp className="w-4 h-4 text-[#A3E635]" />
             </div>
-            <div className="text-xl font-black mt-1">₹{stats.moneySavedRs}</div>
+            <div className="text-xl font-black mt-1">₹{stats.moneySavedRs.toLocaleString('en-IN')}</div>
             <div className="text-[10px] text-white/70 mt-0.5">
-              {stats.usedCount} items saved from bin
+              {stats.usedCount} batches/items utilized
             </div>
           </div>
 
-          <div className="bg-white/10 p-3.5 rounded-2xl backdrop-blur-xs">
-            <div className="flex items-center justify-between text-white/70 text-xs font-medium">
-              <span>Zero-Waste Streak</span>
-              <Flame className="w-4 h-4 text-amber-400" />
+          {isCommercial ? (
+            <div className="bg-white/10 p-3.5 rounded-2xl backdrop-blur-xs">
+              <div className="flex items-center justify-between text-white/70 text-xs font-medium">
+                <span>Value at Risk (≤48h)</span>
+                <IndianRupee className="w-4 h-4 text-amber-300" />
+              </div>
+              <div className="text-xl font-black mt-1">
+                ₹{(stats.valueAtRiskRs ?? 0).toLocaleString('en-IN')}
+              </div>
+              <div className="text-[10px] text-white/70 mt-0.5">
+                Across {stats.urgentCount} urgent FIFO item(s)
+              </div>
             </div>
-            <div className="text-xl font-black mt-1">{stats.zeroWasteStreakDays} Days</div>
-            <div className="text-[10px] text-white/70 mt-0.5">
-              {stats.savingPercentage}% waste prevented
+          ) : (
+            <div className="bg-white/10 p-3.5 rounded-2xl backdrop-blur-xs">
+              <div className="flex items-center justify-between text-white/70 text-xs font-medium">
+                <span>Zero-Waste Streak</span>
+                <Flame className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="text-xl font-black mt-1">{stats.zeroWasteStreakDays} Days</div>
+              <div className="text-[10px] text-white/70 mt-0.5">
+                {stats.savingPercentage}% waste prevented
+              </div>
             </div>
-          </div>
+          )}
+
+          {isCommercial ? (
+            <div className="bg-white/10 p-3.5 rounded-2xl backdrop-blur-xs">
+              <div className="flex items-center justify-between text-white/70 text-xs font-medium">
+                <span>Below Par Stock</span>
+                <RefreshCw className="w-4 h-4 text-amber-300" />
+              </div>
+              <div className="text-xl font-black mt-1">{stats.lowStockCount ?? 0} SKUs</div>
+              <div className="text-[10px] text-white/70 mt-0.5">Need supplier reorder</div>
+            </div>
+          ) : (
+            <div className="bg-white/10 p-3.5 rounded-2xl backdrop-blur-xs">
+              <div className="flex items-center justify-between text-white/70 text-xs font-medium">
+                <span>Urgent Attention</span>
+                <AlertTriangle className="w-4 h-4 text-amber-300" />
+              </div>
+              <div className="text-xl font-black mt-1">{stats.urgentCount} items</div>
+              <div className="text-[10px] text-white/70 mt-0.5">Expiring in ≤ 48 hours</div>
+            </div>
+          )}
 
           <div className="bg-white/10 p-3.5 rounded-2xl backdrop-blur-xs">
             <div className="flex items-center justify-between text-white/70 text-xs font-medium">
-              <span>Urgent Attention</span>
-              <AlertTriangle className="w-4 h-4 text-amber-300" />
-            </div>
-            <div className="text-xl font-black mt-1">{stats.urgentCount} items</div>
-            <div className="text-[10px] text-white/70 mt-0.5">Expiring in ≤ 48 hours</div>
-          </div>
-
-          <div className="bg-white/10 p-3.5 rounded-2xl backdrop-blur-xs">
-            <div className="flex items-center justify-between text-white/70 text-xs font-medium">
-              <span>Active in Kitchen</span>
+              <span>{isEnterprise ? 'Total Active Valuation' : 'Active in Kitchen'}</span>
               <Package className="w-4 h-4 text-emerald-300" />
             </div>
-            <div className="text-xl font-black mt-1">{stats.activeCount} items</div>
+            <div className="text-xl font-black mt-1">
+              {isEnterprise
+                ? `₹${(stats.totalActiveValueRs ?? 0).toLocaleString('en-IN')}`
+                : `${stats.activeCount} items`}
+            </div>
             <div className="text-[10px] text-white/70 mt-0.5">
-              {stats.freshCount} items completely fresh
+              {stats.activeCount} active SKUs &bull; {stats.freshCount} fresh
             </div>
           </div>
         </div>
       </div>
+
+      {/* Commercial Waste Budget Cap & FSSAI Compliance Bar (Restaurant & Enterprise) */}
+      {isCommercial && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2 bg-white border border-[#E2E8DE] rounded-3xl p-5 shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-extrabold text-sm text-stone-900">
+                  Monthly Spoilage Cap vs Actual Loss
+                </h3>
+                <p className="text-[11px] text-stone-500">
+                  Target cap: ₹{wasteBudget.toLocaleString('en-IN')} &bull; Actual expired loss: ₹{stats.moneyWastedRs.toLocaleString('en-IN')}
+                </p>
+              </div>
+              <span
+                className={`text-xs font-black px-2.5 py-1 rounded-full ${
+                  wastePercent >= 80
+                    ? 'bg-rose-100 text-rose-800'
+                    : wastePercent >= 50
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-emerald-100 text-emerald-800'
+                }`}
+              >
+                {wastePercent}% of Cap
+              </span>
+            </div>
+
+            <div className="h-3 w-full bg-stone-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  wastePercent >= 80
+                    ? 'bg-rose-500'
+                    : wastePercent >= 50
+                    ? 'bg-amber-500'
+                    : 'bg-[#2C5F2D]'
+                }`}
+                style={{ width: `${wastePercent}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-stone-500">
+              <span>Remaining buffer: ₹{Math.max(0, wasteBudget - stats.moneyWastedRs).toLocaleString('en-IN')}</span>
+              <span>Utilization rate: {stats.savingPercentage}%</span>
+            </div>
+          </div>
+
+          <div className="bg-[#EAF3E6] border border-[#6B9B4F]/40 rounded-3xl p-5 shadow-xs flex flex-col justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-[#2C5F2D]">
+                <ClipboardCheck className="w-4 h-4" />
+                <h3 className="font-extrabold text-sm">
+                  {isEnterprise ? 'FSSAI / HACCP & Reorder Audit' : 'Kitchen Audit & Reorder Sheet'}
+                </h3>
+              </div>
+              <p className="text-[11px] text-stone-600 mt-1">
+                Export batch codes, suppliers, branch zones, expiry logs &amp; low-stock flags to CSV.
+              </p>
+            </div>
+            <button
+              onClick={exportCsv}
+              className="w-full py-2.5 px-3 rounded-xl bg-[#2C5F2D] hover:bg-[#204721] text-white text-xs font-bold shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export Compliance CSV</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Low-Stock Reorder Alerts (Restaurant & Enterprise) */}
+      {isCommercial && lowStockItems.length > 0 && (
+        <div className="bg-rose-50 border border-rose-200 rounded-3xl p-5 shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="w-4 h-4 text-rose-600" />
+              <h3 className="font-extrabold text-sm text-rose-950">
+                Low-Stock Reorder Queue ({lowStockItems.length} item{lowStockItems.length > 1 ? 's' : ''} at/below Par Level)
+              </h3>
+            </div>
+            <button
+              onClick={() => setActiveTab('inventory')}
+              className="text-xs font-bold text-rose-900 hover:underline cursor-pointer"
+            >
+              Manage Stock &rarr;
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+            {lowStockItems.slice(0, 6).map((item) => (
+              <div
+                key={item.id}
+                className="bg-white p-3 rounded-2xl border border-rose-200 flex items-center justify-between gap-2 text-xs"
+              >
+                <div className="min-w-0">
+                  <p className="font-bold text-stone-900 truncate">{item.name}</p>
+                  <p className="text-[11px] text-rose-700 font-semibold">
+                    Stock: {item.quantity} {item.unit} (Par: {item.parLevel} {item.unit})
+                  </p>
+                  {item.supplierName && (
+                    <p className="text-[10px] text-stone-500 truncate">Supplier: {item.supplierName}</p>
+                  )}
+                </div>
+                <span className="px-2 py-1 rounded-lg bg-rose-100 text-rose-800 text-[10px] font-black shrink-0">
+                  REORDER
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Urgent Expiry Action Card */}
       {urgentItems.length > 0 && (
@@ -138,7 +339,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-amber-600" />
               <h3 className="font-extrabold text-sm text-amber-950">
-                Action Required: {urgentItems.length} items need cooking soon!
+                {isCommercial
+                  ? `FIFO Priority Queue: ${urgentItems.length} batches need immediate prep!`
+                  : `Action Required: ${urgentItems.length} items need cooking soon!`}
               </h3>
             </div>
             <button
@@ -146,12 +349,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
               className="text-xs font-bold text-amber-900 hover:underline flex items-center gap-1 cursor-pointer"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>See Recipe Ideas &rarr;</span>
+              <span>{isCommercial ? 'Batch Prep Ideas' : 'See Recipe Ideas'} &rarr;</span>
             </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-            {urgentItems.slice(0, 3).map((item) => {
+            {urgentItems.slice(0, 3).map((item, idx) => {
               const rem = getRemainingDays(item.estimatedExpiryDate);
               return (
                 <div
@@ -159,20 +362,61 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
                   className="bg-white p-3 rounded-2xl border border-amber-200/80 shadow-xs flex items-center justify-between gap-2"
                 >
                   <div className="min-w-0">
-                    <p className="font-bold text-xs text-stone-900 truncate">{item.name}</p>
-                    <p className="text-[11px] text-amber-700 font-semibold">
+                    <div className="flex items-center gap-1.5">
+                      {isCommercial && (
+                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-500 text-white">
+                          FIFO #{idx + 1}
+                        </span>
+                      )}
+                      <p className="font-bold text-xs text-stone-900 truncate">{item.name}</p>
+                    </div>
+                    <p className="text-[11px] text-amber-700 font-semibold mt-0.5">
                       {rem <= 0 ? 'Expires Today!' : `${rem} day${rem > 1 ? 's' : ''} left`}
+                      {item.batchCode ? ` • Lot ${item.batchCode}` : ''}
                     </p>
                   </div>
                   <button
                     onClick={() => setUsingItem(item)}
                     className="px-2.5 py-1.5 rounded-xl bg-[#2C5F2D] hover:bg-[#204721] text-white text-[11px] font-bold shrink-0 transition-colors cursor-pointer"
                   >
-                    Cooked / Use
+                    {isCommercial ? 'Consume' : 'Cooked / Use'}
                   </button>
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Multi-Branch / Zone Breakdown (Enterprise) */}
+      {isEnterprise && (
+        <div className="bg-white border border-[#E2E8DE] rounded-3xl p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-[#2C5F2D]" />
+              <h3 className="font-extrabold text-sm text-stone-900">Branch &amp; Warehouse Zone Distribution</h3>
+            </div>
+            <button
+              onClick={() => setActiveTab('inventory')}
+              className="text-xs font-bold text-[#2C5F2D] hover:underline cursor-pointer"
+            >
+              Filter by Zone &rarr;
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+            {Object.entries(zoneCounts).map(([zone, count]) => (
+              <div
+                key={zone}
+                onClick={() => setActiveTab('inventory')}
+                className="p-3 bg-[#F7F8F4] hover:bg-[#EAF3E6] border border-[#E2E8DE] hover:border-[#6B9B4F] rounded-2xl transition-all cursor-pointer"
+              >
+                <span className="text-xs font-bold text-stone-800 block truncate">{zone}</span>
+                <span className="text-[11px] text-stone-500 mt-0.5 block">
+                  {count} active batch{count > 1 ? 'es' : ''}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -206,7 +450,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ setActiveTab, onOp
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-[#2C5F2D]" />
-            <h3 className="font-extrabold text-sm text-stone-900">Kitchen Staples Breakdown</h3>
+            <h3 className="font-extrabold text-sm text-stone-900">
+              {isCommercial ? 'Inventory Category Breakdown' : 'Kitchen Staples Breakdown'}
+            </h3>
           </div>
           <button
             onClick={() => setActiveTab('inventory')}
