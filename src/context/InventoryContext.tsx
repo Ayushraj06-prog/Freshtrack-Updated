@@ -15,12 +15,16 @@ import {
   CustomRecipe,
   RestockItem,
   StockFromRestockPayload,
+  MealPlanEntry,
+  ActivityLogEntry,
 } from '../types/inventory';
 
 interface InventoryContextType {
   items: InventoryItem[];
   customRecipes: CustomRecipe[];
   restockList: RestockItem[];
+  mealPlans: MealPlanEntry[];
+  activityLogs: ActivityLogEntry[];
   preferences: UserPreferences;
   dbInfo: DbInfo | null;
   dbConnected: boolean;
@@ -32,6 +36,9 @@ interface InventoryContextType {
   markAsUsed: (id: string, options?: UseItemPayload) => Promise<void>;
   markMultipleAsUsed: (ids: string[]) => Promise<void>;
   markAsExpired: (id: string) => Promise<void>;
+  markMultipleAsExpired: (ids: string[]) => Promise<void>;
+  freezeAndExtendItem: (id: string) => Promise<void>;
+  markMultipleAsFrozen: (ids: string[]) => Promise<void>;
   saveCustomRecipe: (recipe: Partial<CustomRecipe>) => Promise<CustomRecipe>;
   deleteCustomRecipe: (id: string) => Promise<void>;
   cookCustomRecipe: (
@@ -44,6 +51,12 @@ interface InventoryContextType {
   syncNeededRestock: () => Promise<number>;
   stockFromRestockList: (id: string, overrides?: StockFromRestockPayload) => Promise<InventoryItem>;
   bulkStockFromRestockList: (ids: string[]) => Promise<InventoryItem[]>;
+  saveMealPlan: (entry: Partial<MealPlanEntry>) => Promise<MealPlanEntry>;
+  deleteMealPlan: (id: string) => Promise<void>;
+  clearMealPlans: () => Promise<void>;
+  refreshActivityLogs: () => Promise<void>;
+  exportBackupJson: () => Promise<void>;
+  restoreBackupJson: (snapshot: any) => Promise<void>;
   updatePreferences: (updates: Partial<UserPreferences>) => Promise<void>;
   seedDemoData: () => Promise<void>;
   clearAllData: () => Promise<void>;
@@ -71,6 +84,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [customRecipes, setCustomRecipes] = useState<CustomRecipe[]>([]);
   const [restockList, setRestockList] = useState<RestockItem[]>([]);
+  const [mealPlans, setMealPlans] = useState<MealPlanEntry[]>([]);
+  const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFS);
   const [dbInfo, setDbInfo] = useState<DbInfo | null>(null);
   const [dbConnected, setDbConnected] = useState<boolean>(false);
@@ -78,21 +93,33 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     { id: string; title: string; message: string; timestamp: string }[]
   >([]);
 
+  const refreshActivityLogs = async () => {
+    try {
+      const logs = await api.fetchActivityLogs(40);
+      setActivityLogs(logs);
+    } catch {}
+  };
+
   // Load state from backend SQLite database on mount
   const refreshBackendData = async () => {
     try {
-      const [backendItems, backendPrefs, info, customRecs, backendRestock] = await Promise.all([
-        api.fetchItems(),
-        api.fetchPreferences(),
-        api.getDbInfo(),
-        api.fetchCustomRecipes().catch(() => []),
-        api.fetchRestockList().catch(() => []),
-      ]);
+      const [backendItems, backendPrefs, info, customRecs, backendRestock, backendMeals, backendLogs] =
+        await Promise.all([
+          api.fetchItems(),
+          api.fetchPreferences(),
+          api.getDbInfo(),
+          api.fetchCustomRecipes().catch(() => []),
+          api.fetchRestockList().catch(() => []),
+          api.fetchMealPlans().catch(() => []),
+          api.fetchActivityLogs(40).catch(() => []),
+        ]);
       setItems(backendItems);
       if (backendPrefs) setPreferences(backendPrefs);
       setDbInfo(info);
       setCustomRecipes(customRecs || []);
       setRestockList(backendRestock || []);
+      setMealPlans(backendMeals || []);
+      setActivityLogs(backendLogs || []);
       setDbConnected(true);
     } catch (err) {
       console.warn('Backend DB initial sync retry:', err);
@@ -258,6 +285,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
       api.getDbInfo().then(setDbInfo).catch(() => {});
       api.fetchRestockList().then(setRestockList).catch(() => {});
+      refreshActivityLogs();
     } catch (err) {
       console.error('Failed to mark item as used in backend DB:', err);
     }
@@ -267,12 +295,13 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const idSet = new Set(ids);
     const nowIso = new Date().toISOString();
     setItems((prev) =>
-      prev.map((i) => (idSet.has(i.id) ? { ...i, status: 'used', usedAt: nowIso } : i))
+      prev.map((i) => (idSet.has(i.id) ? { ...i, status: 'used', quantity: 0, usedAt: nowIso } : i))
     );
     try {
       await api.markMultipleAsUsed(ids);
       api.getDbInfo().then(setDbInfo).catch(() => {});
       api.fetchRestockList().then(setRestockList).catch(() => {});
+      refreshActivityLogs();
     } catch (err) {
       console.error('Failed to mark multiple items as used in DB:', err);
     }
@@ -283,8 +312,44 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try {
       await api.markAsExpired(id);
       api.getDbInfo().then(setDbInfo).catch(() => {});
+      refreshActivityLogs();
     } catch (err) {
       console.error('Failed to mark item as expired:', err);
+    }
+  };
+
+  const markMultipleAsExpired = async (ids: string[]) => {
+    const idSet = new Set(ids);
+    setItems((prev) => prev.map((i) => (idSet.has(i.id) ? { ...i, status: 'expired' } : i)));
+    try {
+      await api.markMultipleAsExpired(ids);
+      api.getDbInfo().then(setDbInfo).catch(() => {});
+      refreshActivityLogs();
+    } catch (err) {
+      console.error('Failed to mark multiple items expired:', err);
+    }
+  };
+
+  const freezeAndExtendItem = async (id: string) => {
+    try {
+      const updated = await api.freezeAndExtendItem(id);
+      setItems((prev) => prev.map((i) => (i.id === id ? updated : i)));
+      api.getDbInfo().then(setDbInfo).catch(() => {});
+      refreshActivityLogs();
+    } catch (err) {
+      console.error('Failed to freeze & extend item:', err);
+    }
+  };
+
+  const markMultipleAsFrozen = async (ids: string[]) => {
+    try {
+      const updated = await api.markMultipleAsFrozen(ids);
+      const map = new Map(updated.map((u) => [u.id, u]));
+      setItems((prev) => prev.map((i) => map.get(i.id) || i));
+      api.getDbInfo().then(setDbInfo).catch(() => {});
+      refreshActivityLogs();
+    } catch (err) {
+      console.error('Failed to bulk freeze items:', err);
     }
   };
 
@@ -403,7 +468,54 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setRestockList((prev) => prev.map((r) => updatedMap.get(r.id) || r));
     }
     api.getDbInfo().then(setDbInfo).catch(() => {});
+    refreshActivityLogs();
     return res.stockedItems || [];
+  };
+
+  const saveMealPlan = async (entry: Partial<MealPlanEntry>): Promise<MealPlanEntry> => {
+    const saved = await api.saveMealPlan(entry);
+    setMealPlans((prev) => {
+      const idx = prev.findIndex((m) => m.id === saved.id);
+      if (idx !== -1) return prev.map((m) => (m.id === saved.id ? saved : m));
+      return [...prev, saved];
+    });
+    return saved;
+  };
+
+  const deleteMealPlan = async (id: string) => {
+    setMealPlans((prev) => prev.filter((m) => m.id !== id));
+    try {
+      await api.deleteMealPlan(id);
+    } catch (err) {
+      console.error('Failed to delete meal plan:', err);
+    }
+  };
+
+  const clearMealPlans = async () => {
+    setMealPlans([]);
+    try {
+      await api.clearMealPlans();
+    } catch (err) {
+      console.error('Failed to clear meal plans:', err);
+    }
+  };
+
+  const exportBackupJson = async () => {
+    const snapshot = await api.exportBackup();
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `freshtrack_backup_${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const restoreBackupJson = async (snapshot: any) => {
+    await api.restoreBackup(snapshot);
+    await refreshBackendData();
   };
 
   const updatePreferences = async (updates: Partial<UserPreferences>) => {
@@ -587,6 +699,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         items,
         customRecipes,
         restockList,
+        mealPlans,
+        activityLogs,
         preferences,
         dbInfo,
         dbConnected,
@@ -598,6 +712,9 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         markAsUsed,
         markMultipleAsUsed,
         markAsExpired,
+        markMultipleAsExpired,
+        freezeAndExtendItem,
+        markMultipleAsFrozen,
         saveCustomRecipe,
         deleteCustomRecipe,
         cookCustomRecipe,
@@ -607,6 +724,12 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         syncNeededRestock,
         stockFromRestockList,
         bulkStockFromRestockList,
+        saveMealPlan,
+        deleteMealPlan,
+        clearMealPlans,
+        refreshActivityLogs,
+        exportBackupJson,
+        restoreBackupJson,
         updatePreferences,
         seedDemoData,
         clearAllData,

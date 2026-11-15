@@ -203,3 +203,27 @@ export interface StockFromRestockPayload {
   parLevel?: number | null;
   branchZone?: string | null;
 }
+
+export type MealSlot = 'breakfast' | 'lunch' | 'dinner';
+
+export interface MealPlanEntry {
+  id: string;
+  dayOfWeek: string; // 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun'
+  slot: MealSlot;
+  recipeId?: string | null;
+  recipeTitle: string;
+  servings: number;
+  ingredients: string[];
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ActivityLogEntry {
+  id: string;
+  action: string;
+  itemName: string;
+  details: string;
+  timestamp: string;
+}
+

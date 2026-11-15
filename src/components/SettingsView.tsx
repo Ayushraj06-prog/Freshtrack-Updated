@@ -20,6 +20,9 @@ import {
   UtensilsCrossed,
   Building2,
   SlidersHorizontal,
+  Upload,
+  History,
+  FileJson,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { aiService, AiStatus } from '../services/aiService';
@@ -37,6 +40,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenScaleModal }) 
     seedDemoData,
     clearAllData,
     exportCsv,
+    exportBackupJson,
+    restoreBackupJson,
+    activityLogs,
     dbInfo,
     dbConnected,
   } = useInventory();
@@ -45,10 +51,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenScaleModal }) 
   const [testing, setTesting] = useState(false);
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [dbActionMsg, setDbActionMsg] = useState<string | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [logFilter, setLogFilter] = useState('');
 
   useEffect(() => {
     aiService.getStatus().then(setAiStatus);
   }, []);
+
+  const showDbToast = (msg: string) => {
+    setDbActionMsg(msg);
+    setTimeout(() => setDbActionMsg(null), 5000);
+  };
+
+  const handleRestoreFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      await restoreBackupJson(json);
+      showDbToast(`Restored full SQLite backup from "${file.name}"!`);
+    } catch (err: any) {
+      showDbToast(`Could not restore backup: ${err?.message || 'Invalid JSON file'}`);
+    } finally {
+      e.target.value = '';
+    }
+  };
 
   const handleRunTests = () => {
     setTesting(true);
@@ -456,17 +485,94 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenScaleModal }) 
         </div>
       </div>
 
-      {/* 7. Database Seeding & Reset */}
+      {/* 7. Full Activity & Audit Log */}
+      <div className="bg-white rounded-3xl p-5 border border-[#E2E8DE] shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-stone-100">
+          <div className="flex items-center gap-2">
+            <History className="w-4 h-4 text-[#2C5F2D]" />
+            <h3 className="font-extrabold text-sm text-stone-900">
+              Full Kitchen Activity &amp; Audit Log ({activityLogs.length})
+            </h3>
+          </div>
+          <input
+            type="text"
+            value={logFilter}
+            onChange={(e) => setLogFilter(e.target.value)}
+            placeholder="Filter log..."
+            className="px-2.5 py-1 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#2C5F2D]"
+          />
+        </div>
+
+        <div className="max-h-56 overflow-y-auto divide-y divide-stone-100 text-xs">
+          {activityLogs
+            .filter(
+              (l) =>
+                !logFilter.trim() ||
+                l.itemName.toLowerCase().includes(logFilter.toLowerCase()) ||
+                l.action.toLowerCase().includes(logFilter.toLowerCase()) ||
+                (l.details || '').toLowerCase().includes(logFilter.toLowerCase())
+            )
+            .slice(0, 25)
+            .map((log) => (
+              <div key={log.id} className="py-2 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <span className="text-[10px] font-black uppercase px-1.5 py-0.5 rounded bg-stone-100 text-stone-700 mr-2">
+                    {log.action}
+                  </span>
+                  <span className="font-bold text-stone-900">{log.itemName}</span>
+                  {log.details && <span className="text-stone-500 ml-1.5">— {log.details}</span>}
+                </div>
+                <span className="text-[10px] text-stone-400 shrink-0 font-mono">
+                  {new Date(log.timestamp).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}{' '}
+                  {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            ))}
+          {activityLogs.length === 0 && (
+            <p className="py-4 text-center text-stone-400 text-xs">
+              Activity events appear automatically as you add, freeze, use, spoil, or restock items.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* 8. JSON Backup/Restore, Seeding & Reset */}
       <div className="bg-white rounded-3xl p-5 border border-[#E2E8DE] shadow-xs space-y-3">
         <h3 className="font-extrabold text-sm text-stone-900 pb-2 border-b border-stone-100">
-          Database Tools &amp; Seeding
+          Backup, Restore, Seeding &amp; Reset
         </h3>
+
+        {dbActionMsg && (
+          <div className="p-2.5 rounded-xl bg-[#EAF3E6] border border-[#6B9B4F] text-[#2C5F2D] text-xs font-bold">
+            {dbActionMsg}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              await exportBackupJson();
+              showDbToast('Downloaded complete JSON database backup!');
+            }}
+            className="py-2.5 px-3 bg-stone-900 hover:bg-stone-800 text-[#A3E635] text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <FileJson className="w-4 h-4" />
+            <span>Export Full JSON Backup</span>
+          </button>
+
+          <label className="py-2.5 px-3 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer">
+            <Upload className="w-4 h-4 text-[#2C5F2D]" />
+            <span>Restore JSON Backup</span>
+            <input type="file" accept=".json,application/json" onChange={handleRestoreFile} className="hidden" />
+          </label>
+        </div>
 
         <div className="flex flex-col sm:flex-row gap-2">
           <button
-            onClick={() => {
-              seedDemoData();
-              alert('Loaded realistic sample Indian kitchen inventory into SQLite database!');
+            onClick={async () => {
+              await seedDemoData();
+              showDbToast('Loaded realistic sample Indian kitchen inventory into SQLite database!');
             }}
             className="flex-1 py-2.5 px-3 bg-stone-100 hover:bg-stone-200 text-stone-800 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
           >
@@ -484,17 +590,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenScaleModal }) 
         </div>
 
         <div className="pt-2">
-          <button
-            onClick={() => {
-              if (confirm('Clear all SQLite database items and reset FreshTrack?')) {
-                clearAllData();
-              }
-            }}
-            className="w-full py-2.5 px-3 text-rose-600 hover:bg-rose-50 text-xs font-bold rounded-xl border border-rose-200 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-          >
-            <Trash2 className="w-4 h-4" />
-            <span>Reset Database &amp; Clear All Records</span>
-          </button>
+          {confirmReset ? (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  await clearAllData();
+                  setConfirmReset(false);
+                  showDbToast('All inventory records cleared from SQLite.');
+                }}
+                className="flex-1 py-2.5 px-3 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Confirm Clear All Items
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmReset(false)}
+                className="py-2.5 px-4 bg-stone-100 text-stone-700 text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmReset(true)}
+              className="w-full py-2.5 px-3 text-rose-600 hover:bg-rose-50 text-xs font-bold rounded-xl border border-rose-200 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Reset Database &amp; Clear All Records</span>
+            </button>
+          )}
         </div>
       </div>
     </div>

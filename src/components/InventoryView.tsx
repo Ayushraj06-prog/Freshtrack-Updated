@@ -21,6 +21,10 @@ import {
   Building2,
   RefreshCw,
   ShoppingCart,
+  Snowflake,
+  XCircle,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays, SHELF_LIFE_DATABASE } from '../data/shelfLifeData';
@@ -42,8 +46,22 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   initialStatusFilter,
   onClearStatusJump,
 }) => {
-  const { items, restockList, markAsUsed, deleteItem, updateItem, addToRestockList, preferences, stats, exportCsv } =
-    useInventory();
+  const {
+    items,
+    restockList,
+    markAsUsed,
+    markMultipleAsUsed,
+    markAsExpired,
+    markMultipleAsExpired,
+    freezeAndExtendItem,
+    markMultipleAsFrozen,
+    deleteItem,
+    updateItem,
+    addToRestockList,
+    preferences,
+    stats,
+    exportCsv,
+  } = useInventory();
 
   const isCommercial = preferences.operationScale !== 'household';
   const isEnterprise = preferences.operationScale === 'enterprise';
@@ -52,9 +70,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   const [selectedStorage, setSelectedStorage] = useState<string>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedZone, setSelectedZone] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<'active' | 'urgent' | 'low-stock' | 'used' | 'restock' | 'all'>('active');
+  const [selectedStatus, setSelectedStatus] = useState<
+    'active' | 'urgent' | 'low-stock' | 'used' | 'expired' | 'restock' | 'all'
+  >('active');
   const [fifoSort, setFifoSort] = useState<boolean>(true);
   const [queuedNotice, setQueuedNotice] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialStatusFilter) {
@@ -104,6 +127,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       // Status filter
       if (selectedStatus === 'active' && item.status !== 'active') return false;
       if (selectedStatus === 'used' && item.status !== 'used') return false;
+      if (selectedStatus === 'expired' && item.status !== 'expired') return false;
       if (selectedStatus === 'urgent') {
         if (item.status !== 'active') return false;
         const days = getRemainingDays(item.estimatedExpiryDate);
@@ -321,17 +345,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
         {/* Status Pills */}
         {[
           { id: 'active', label: 'Active Fresh' },
-          { id: 'urgent', label: 'Expiring ≤48h' },
+          { id: 'urgent', label: `Expiring ≤48h (${stats.urgentCount})` },
           { id: 'used', label: 'Cooked/Saved (₹)' },
+          { id: 'expired', label: `Spoiled (${stats.expiredCount})` },
           { id: 'restock', label: `Completed & Buy List (${pendingBuyCount})` },
         ].map((st) => (
           <button
             key={st.id}
-            onClick={() => setSelectedStatus(st.id as any)}
+            onClick={() => {
+              setSelectedStatus(st.id as any);
+              setSelectedIds([]);
+            }}
             className={`px-3 py-1.5 rounded-xl font-bold whitespace-nowrap transition-all cursor-pointer ${
               selectedStatus === st.id
                 ? st.id === 'restock'
                   ? 'bg-[#2C5F2D] text-white shadow-xs'
+                  : st.id === 'expired'
+                  ? 'bg-rose-100 text-rose-900 border border-rose-300'
                   : 'bg-[#EAF3E6] text-[#2C5F2D] border border-[#6B9B4F]'
                 : 'bg-white border border-[#E2E8DE] text-stone-500 hover:bg-stone-50'
             }`}
@@ -340,9 +370,24 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           </button>
         ))}
 
-        {/* Category Dropdown */}
+        {/* Multi-select toggle + Category Dropdown */}
         {selectedStatus !== 'restock' && (
-          <div className="ml-auto shrink-0">
+          <div className="ml-auto flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectionMode((v) => !v);
+                setSelectedIds([]);
+              }}
+              className={`px-2.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer transition-all ${
+                selectionMode
+                  ? 'bg-stone-900 text-[#A3E635]'
+                  : 'bg-white border border-[#E2E8DE] text-stone-700 hover:bg-stone-50'
+              }`}
+            >
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span>{selectionMode ? 'Done Selecting' : 'Batch Select'}</span>
+            </button>
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
@@ -358,6 +403,112 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Batch Multi-Select Action Bar */}
+      {selectionMode && selectedStatus !== 'restock' && (
+        <div className="bg-stone-900 text-white rounded-2xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs shadow-md">
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                if (selectedIds.length === filteredItems.length) {
+                  setSelectedIds([]);
+                } else {
+                  setSelectedIds(filteredItems.map((i) => i.id));
+                }
+              }}
+              className="px-2.5 py-1 rounded-lg bg-stone-800 hover:bg-stone-700 text-[#A3E635] font-bold cursor-pointer"
+            >
+              {selectedIds.length === filteredItems.length && filteredItems.length > 0
+                ? 'Unselect All'
+                : `Select All (${filteredItems.length})`}
+            </button>
+            <span className="font-bold text-stone-200">{selectedIds.length} selected</span>
+          </div>
+
+          {selectedIds.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={async () => {
+                  await markMultipleAsUsed(selectedIds);
+                  setQueuedNotice(`Marked ${selectedIds.length} item(s) as Used / Saved.`);
+                  setTimeout(() => setQueuedNotice(null), 4000);
+                  setSelectedIds([]);
+                  setSelectionMode(false);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-[#A3E635] text-[#2C5F2D] font-extrabold cursor-pointer flex items-center gap-1"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Bulk Mark Used</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  await markMultipleAsFrozen(selectedIds);
+                  setQueuedNotice(`Froze & extended shelf life for ${selectedIds.length} item(s).`);
+                  setTimeout(() => setQueuedNotice(null), 4000);
+                  setSelectedIds([]);
+                  setSelectionMode(false);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-sky-500 text-white font-bold cursor-pointer flex items-center gap-1"
+              >
+                <Snowflake className="w-3.5 h-3.5" />
+                <span>Freeze &amp; Extend</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  const chosen = items.filter((i) => selectedIds.includes(i.id));
+                  for (const it of chosen) {
+                    if (!pendingBuyNames.has(it.name.toLowerCase())) {
+                      await addToRestockList({
+                        name: it.name,
+                        category: it.category,
+                        targetQuantity: Number(it.originalQuantity || it.quantity || 1),
+                        unit: it.unit,
+                        storage: it.storage,
+                        estimatedPrice: it.price,
+                        supplierName: it.supplierName ?? null,
+                        branchZone: it.branchZone ?? (preferences.branchLocation || null),
+                        parLevel: it.parLevel ?? null,
+                        sourceItemId: it.id,
+                        reason: 'manual',
+                        priority: 'normal',
+                      });
+                    }
+                  }
+                  setQueuedNotice(`Saved ${chosen.length} item(s) to Need-to-Buy list.`);
+                  setTimeout(() => setQueuedNotice(null), 4000);
+                  setSelectedIds([]);
+                  setSelectionMode(false);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-amber-400 text-stone-900 font-extrabold cursor-pointer flex items-center gap-1"
+              >
+                <ShoppingCart className="w-3.5 h-3.5" />
+                <span>+ Buy List</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  await markMultipleAsExpired(selectedIds);
+                  setQueuedNotice(`Marked ${selectedIds.length} item(s) as Spoiled / Wasted.`);
+                  setTimeout(() => setQueuedNotice(null), 4000);
+                  setSelectedIds([]);
+                  setSelectionMode(false);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-rose-600 text-white font-bold cursor-pointer flex items-center gap-1"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                <span>Mark Spoiled</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Completed & Need-to-Buy Procurement Workspace */}
       {selectedStatus === 'restock' ? (
@@ -377,12 +528,29 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               Number(item.quantity) <= Number(item.parLevel);
             const isFifoFirst = isCommercial && fifoSort && item.status === 'active' && idx === 0;
 
+            const isChecked = selectedIds.includes(item.id);
+            const canFreeze = item.status === 'active' && item.storage !== 'freezer';
+
             return (
               <div
                 key={item.id}
+                onClick={
+                  selectionMode
+                    ? () =>
+                        setSelectedIds((prev) =>
+                          prev.includes(item.id) ? prev.filter((id) => id !== item.id) : [...prev, item.id]
+                        )
+                    : undefined
+                }
                 className={`p-4 rounded-3xl border transition-all duration-200 flex flex-col justify-between group ${
-                  isUsed
-                    ? 'bg-stone-50/70 border-stone-200 opacity-75'
+                  selectionMode ? 'cursor-pointer' : ''
+                } ${
+                  isChecked
+                    ? 'ring-2 ring-[#2C5F2D] bg-[#EAF3E6]/60 border-[#2C5F2D]'
+                    : isUsed
+                    ? 'bg-stone-50/70 border-stone-200 opacity-80'
+                    : isExpired
+                    ? 'bg-rose-50/60 border-rose-200'
                     : isUrgent
                     ? 'bg-amber-50/60 border-amber-300 shadow-xs'
                     : 'bg-white border-[#E2E8DE] hover:shadow-md'
@@ -391,6 +559,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <div>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-start gap-3 min-w-0">
+                      {selectionMode && (
+                        <span className="mt-1 text-[#2C5F2D] shrink-0">
+                          {isChecked ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5 text-stone-400" />}
+                        </span>
+                      )}
                       {item.imageUrl ? (
                         <img
                           src={item.imageUrl}
@@ -400,7 +573,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       ) : (
                         <div
                           className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${
-                            isUrgent ? 'bg-amber-100 text-amber-700' : 'bg-[#EAF3E6] text-[#2C5F2D]'
+                            isExpired
+                              ? 'bg-rose-100 text-rose-700'
+                              : isUrgent
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-[#EAF3E6] text-[#2C5F2D]'
                           }`}
                         >
                           <Package className="w-6 h-6" />
@@ -468,12 +645,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                         </span>
                       ) : isExpired ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-rose-100 text-rose-800 text-[11px] font-bold">
-                          Expired
+                          Spoiled / Wasted
                         </span>
                       ) : isUrgent ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500 text-white text-[11px] font-black shadow-xs">
                           <AlertTriangle className="w-3.5 h-3.5" />
-                          {remDays <= 0 ? 'Expires Today!' : `${remDays}d left`}
+                          {remDays < 0 ? `Overdue ${Math.abs(remDays)}d` : remDays === 0 ? 'Expires Today!' : `${remDays}d left`}
                         </span>
                       ) : isWarning ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 text-[11px] font-bold">
@@ -525,7 +702,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </div>
 
                 {/* Bottom Actions */}
-                <div className="flex items-center justify-between pt-3 mt-3 border-t border-stone-100 text-xs">
+                <div
+                  className="flex flex-wrap items-center justify-between gap-2 pt-3 mt-3 border-t border-stone-100 text-xs"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setEditingItem(item)}
@@ -534,21 +714,68 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
-                    <button
-                      onClick={() => {
-                        if (confirm(`Remove "${item.name}" from SQLite database?`)) {
-                          deleteItem(item.id);
-                        }
-                      }}
-                      className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                      title="Delete Item"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+
+                    {confirmDeleteId === item.id ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            deleteItem(item.id);
+                            setConfirmDeleteId(null);
+                          }}
+                          className="px-2 py-0.5 rounded-lg bg-rose-600 text-white text-[10px] font-bold cursor-pointer"
+                        >
+                          Delete?
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="px-1.5 py-0.5 rounded-lg bg-stone-100 text-stone-600 text-[10px] font-bold cursor-pointer"
+                        >
+                          No
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmDeleteId(item.id)}
+                        className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                        title="Delete Item"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    {canFreeze && isUrgent && (
+                      <button
+                        onClick={async () => {
+                          await freezeAndExtendItem(item.id);
+                          setQueuedNotice(`Moved "${item.name}" to Freezer & extended shelf life!`);
+                          setTimeout(() => setQueuedNotice(null), 4000);
+                        }}
+                        className="px-2 py-1 text-[10px] font-bold text-sky-800 bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                        title="Move to Freezer & extend expiry automatically"
+                      >
+                        <Snowflake className="w-3 h-3" />
+                        <span>Freeze</span>
+                      </button>
+                    )}
+
+                    {item.status === 'active' && (
+                      <button
+                        onClick={async () => {
+                          await markAsExpired(item.id);
+                          setQueuedNotice(`Logged "${item.name}" as Spoiled in waste analytics.`);
+                          setTimeout(() => setQueuedNotice(null), 4000);
+                        }}
+                        className="px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                        title="Mark Spoiled / Expired"
+                      >
+                        <XCircle className="w-3 h-3" />
+                        <span>Spoiled</span>
+                      </button>
+                    )}
                   </div>
 
-                  {!isUsed ? (
-                    <div className="flex items-center gap-2">
+                  {item.status === 'active' ? (
+                    <div className="flex items-center gap-1.5 ml-auto">
                       {(isCommercial || isBelowPar) && !pendingBuyNames.has(item.name.toLowerCase()) && (
                         <button
                           onClick={async () => {
@@ -595,7 +822,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                       </button>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 ml-auto">
                       {!pendingBuyNames.has(item.name.toLowerCase()) ? (
                         <button
                           onClick={async () => {
@@ -610,12 +837,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                               branchZone: item.branchZone ?? (preferences.branchLocation || null),
                               parLevel: item.parLevel ?? null,
                               sourceItemId: item.id,
-                              reason: 'completed',
-                              priority: 'normal',
+                              reason: isExpired ? 'expired' : 'completed',
+                              priority: isExpired ? 'urgent' : 'normal',
                               checked: false,
                               status: 'pending',
                             });
-                            setQueuedNotice(`Saved completed item "${item.name}" to your Need-to-Buy list.`);
+                            setQueuedNotice(`Saved "${item.name}" to your Need-to-Buy list.`);
                             setTimeout(() => setQueuedNotice(null), 4000);
                           }}
                           className="px-2.5 py-1 text-[11px] font-bold text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors cursor-pointer flex items-center gap-1"

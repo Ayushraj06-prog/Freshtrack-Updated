@@ -127,6 +127,19 @@ sqliteDb.exec(`
     createdAt TEXT,
     updatedAt TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS meal_plans (
+    id TEXT PRIMARY KEY,
+    dayOfWeek TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    recipeId TEXT,
+    recipeTitle TEXT NOT NULL,
+    servings INTEGER DEFAULT 2,
+    ingredients TEXT,
+    notes TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  );
 `);
 
 // Safe migrations for existing preferences tables
@@ -483,6 +496,9 @@ export const db = {
       )
     `);
     stmt.run(prepared);
+    if (!item.id) {
+      this.logActivity('added', prepared.name, `Added ${prepared.quantity} ${prepared.unit} to ${prepared.storage}`);
+    }
     return prepared;
   },
 
@@ -629,9 +645,11 @@ export const db = {
         console.warn('Auto-queue restock skipped:', err);
       }
 
+      this.logActivity('used', existing.name, `${portionLabel} (100% depleted)`);
       return finished;
     } else {
       // Partially used - remains active with updated quantity!
+      this.logActivity('used', existing.name, `${portionLabel} (${remainingQty} ${existing.unit} left)`);
       return this.updateItem(id, {
         status: 'active',
         quantity: remainingQty,
@@ -643,19 +661,56 @@ export const db = {
   },
 
   markItemsUsed(ids: string[]) {
-    const nowIso = new Date().toISOString();
     return ids.map((id) => this.markItemUsed(id, { portion: 1.0, usedPortionName: 'Finished 100%' })).filter(Boolean);
   },
 
   markItemExpired(id: string) {
-    return this.updateItem(id, {
+    const existing = this.getItemById(id);
+    if (!existing) return null;
+    const updated = this.updateItem(id, {
       status: 'expired',
       updatedAt: new Date().toISOString(),
     });
+    this.logActivity(
+      'expired',
+      existing.name,
+      `Marked spoiled/wasted (${existing.quantity} ${existing.unit}${existing.price ? `, ₹${existing.price} loss` : ''})`
+    );
+    return updated;
+  },
+
+  markItemsExpired(ids: string[]) {
+    return ids.map((id) => this.markItemExpired(id)).filter(Boolean);
+  },
+
+  freezeAndExtendItem(id: string) {
+    const existing = this.getItemById(id);
+    if (!existing) return null;
+
+    const freezerDays = defaultShelfLifeDays(existing.category, 'freezer');
+    const extendedDate = formatDateOffset(freezerDays);
+    const nextExpiry =
+      extendedDate > existing.estimatedExpiryDate ? extendedDate : existing.estimatedExpiryDate;
+    const dateStr = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+    const freezeNote = `[${dateStr}] Frozen & extended expiry to ${nextExpiry}`;
+    const updatedNotes = existing.notes ? `${existing.notes} • ${freezeNote}` : freezeNote;
+
+    const updated = this.updateItem(id, {
+      storage: 'freezer',
+      estimatedExpiryDate: nextExpiry,
+      notes: updatedNotes,
+    });
+    this.logActivity('frozen', existing.name, `Moved to Freezer • extended to ${nextExpiry}`);
+    return updated;
+  },
+
+  markItemsFrozen(ids: string[]) {
+    return ids.map((id) => this.freezeAndExtendItem(id)).filter(Boolean);
   },
 
   clearAllItems() {
     sqliteDb.exec('DELETE FROM items;');
+    this.logActivity('cleared', 'All Inventory', 'Database items cleared');
     return true;
   },
 
@@ -1045,6 +1100,8 @@ export const db = {
       checked: false,
     });
 
+    this.logActivity('restocked', restock.name, `Restocked ${qty} ${overrides.unit || restock.unit} into ${overrides.storage || restock.storage}`);
+
     return {
       stockedItem,
       restockItem: updatedRestock,
@@ -1120,6 +1177,132 @@ export const db = {
       addedCount: added.length,
       items: this.getRestockList(),
     };
+  },
+
+  // ---------------- Activity & Audit Logs ----------------
+  logActivity(action: string, itemName: string, details: string) {
+    try {
+      const id = `act-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const timestamp = new Date().toISOString();
+      sqliteDb
+        .prepare('INSERT INTO activity_logs (id, action, itemName, details, timestamp) VALUES (?, ?, ?, ?, ?)')
+        .run(id, action, itemName, details ?? '', timestamp);
+
+      // Keep recent 200 rows to stay lightweight
+      sqliteDb.exec(`
+        DELETE FROM activity_logs WHERE id NOT IN (
+          SELECT id FROM activity_logs ORDER BY timestamp DESC LIMIT 200
+        )
+      `);
+    } catch (err) {
+      console.warn('Activity log skipped:', err);
+    }
+  },
+
+  getActivityLogs(limit = 40) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 40, 1), 200);
+    return sqliteDb
+      .prepare('SELECT * FROM activity_logs ORDER BY timestamp DESC LIMIT ?')
+      .all(safeLimit) as any[];
+  },
+
+  // ---------------- Weekly Meal & Prep Planner ----------------
+  getMealPlans() {
+    const rows = sqliteDb.prepare('SELECT * FROM meal_plans ORDER BY createdAt ASC').all() as any[];
+    return rows.map(mapMealPlan);
+  },
+
+  saveMealPlan(entry: any) {
+    const nowIso = new Date().toISOString();
+    const dayOfWeek = entry.dayOfWeek || 'Mon';
+    const slot = entry.slot || 'lunch';
+    const id = entry.id || `${dayOfWeek}-${slot}`;
+    const prepared = {
+      id,
+      dayOfWeek,
+      slot,
+      recipeId: entry.recipeId ?? null,
+      recipeTitle: String(entry.recipeTitle || '').trim() || 'Planned Dish',
+      servings: Number(entry.servings) > 0 ? Number(entry.servings) : 2,
+      ingredients:
+        typeof entry.ingredients === 'string'
+          ? entry.ingredients
+          : JSON.stringify(Array.isArray(entry.ingredients) ? entry.ingredients : []),
+      notes: entry.notes ?? null,
+      createdAt: entry.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    sqliteDb
+      .prepare(
+        `
+      INSERT OR REPLACE INTO meal_plans (
+        id, dayOfWeek, slot, recipeId, recipeTitle, servings, ingredients, notes, createdAt, updatedAt
+      ) VALUES (
+        @id, @dayOfWeek, @slot, @recipeId, @recipeTitle, @servings, @ingredients, @notes, @createdAt, @updatedAt
+      )
+    `
+      )
+      .run(prepared);
+
+    return mapMealPlan(prepared);
+  },
+
+  deleteMealPlan(id: string) {
+    sqliteDb.prepare('DELETE FROM meal_plans WHERE id = ?').run(id);
+    return true;
+  },
+
+  clearMealPlans() {
+    sqliteDb.exec('DELETE FROM meal_plans;');
+    return true;
+  },
+
+  // ---------------- Full JSON Backup & Restore ----------------
+  exportBackupJson() {
+    return {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      preferences: this.getPreferences(),
+      items: this.getAllItems(),
+      customRecipes: this.getAllCustomRecipes(),
+      restockList: this.getRestockList(),
+      mealPlans: this.getMealPlans(),
+      activityLogs: this.getActivityLogs(100),
+    };
+  },
+
+  restoreBackupJson(snapshot: any) {
+    if (!snapshot || typeof snapshot !== 'object') {
+      throw new Error('Invalid backup JSON payload');
+    }
+    if (snapshot.preferences) {
+      this.updatePreferences(snapshot.preferences);
+    }
+    if (Array.isArray(snapshot.items)) {
+      sqliteDb.exec('DELETE FROM items;');
+      this.insertItems(snapshot.items);
+    }
+    if (Array.isArray(snapshot.customRecipes)) {
+      sqliteDb.exec('DELETE FROM custom_recipes;');
+      for (const r of snapshot.customRecipes) {
+        this.saveCustomRecipe(r);
+      }
+    }
+    if (Array.isArray(snapshot.restockList)) {
+      sqliteDb.exec('DELETE FROM restock_list;');
+      for (const r of snapshot.restockList) {
+        this.saveRestockItem(r);
+      }
+    }
+    if (Array.isArray(snapshot.mealPlans)) {
+      sqliteDb.exec('DELETE FROM meal_plans;');
+      for (const m of snapshot.mealPlans) {
+        this.saveMealPlan(m);
+      }
+    }
+    this.logActivity('restocked', 'Full Database Restore', `Restored backup (${Array.isArray(snapshot.items) ? snapshot.items.length : 0} items)`);
+    return this.exportBackupJson();
   },
 };
 
@@ -1223,6 +1406,25 @@ function mapItem(row: any) {
     supplierName: row.supplierName || undefined,
     parLevel: row.parLevel !== null && row.parLevel !== undefined ? Number(row.parLevel) : null,
     branchZone: row.branchZone || undefined,
+    createdAt: row.createdAt || undefined,
+    updatedAt: row.updatedAt || undefined,
+  };
+}
+
+function mapMealPlan(row: any) {
+  let ingredients: string[] = [];
+  try {
+    ingredients = typeof row.ingredients === 'string' ? JSON.parse(row.ingredients) : row.ingredients || [];
+  } catch {}
+  return {
+    id: row.id,
+    dayOfWeek: row.dayOfWeek,
+    slot: row.slot,
+    recipeId: row.recipeId || undefined,
+    recipeTitle: row.recipeTitle,
+    servings: Number(row.servings) || 2,
+    ingredients,
+    notes: row.notes || undefined,
     createdAt: row.createdAt || undefined,
     updatedAt: row.updatedAt || undefined,
   };

@@ -130,6 +130,18 @@ apiRouter.post('/items/:id/expire', (req, res) => {
   }
 });
 
+apiRouter.post('/items/:id/freeze', (req, res) => {
+  try {
+    const updated = db.freezeAndExtendItem(req.params.id);
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'Item not found' });
+    }
+    res.json({ success: true, item: updated });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 apiRouter.post('/items/bulk-use', (req, res) => {
   try {
     const { ids } = req.body;
@@ -137,6 +149,32 @@ apiRouter.post('/items/bulk-use', (req, res) => {
       return res.status(400).json({ success: false, error: 'ids must be an array' });
     }
     const updated = db.markItemsUsed(ids);
+    res.json({ success: true, count: updated.length, items: updated });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/items/bulk-expire', (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids)) {
+      return res.status(400).json({ success: false, error: 'ids must be an array' });
+    }
+    const updated = db.markItemsExpired(ids);
+    res.json({ success: true, count: updated.length, items: updated });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/items/bulk-freeze', (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids)) {
+      return res.status(400).json({ success: false, error: 'ids must be an array' });
+    }
+    const updated = db.markItemsFrozen(ids);
     res.json({ success: true, count: updated.length, items: updated });
   } catch (err: any) {
     res.status(400).json({ success: false, error: err.message });
@@ -349,5 +387,74 @@ apiRouter.post('/restock/:id/stock', (req, res) => {
     res.status(400).json({ success: false, error: err.message });
   }
 });
+
+// 9. Weekly Meal & Prep Planner
+apiRouter.get('/meal-plans', (req, res) => {
+  try {
+    const plans = db.getMealPlans();
+    res.json({ success: true, count: plans.length, plans });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/meal-plans', (req, res) => {
+  try {
+    const plan = db.saveMealPlan(req.body);
+    res.status(201).json({ success: true, plan });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/meal-plans/:id', (req, res) => {
+  try {
+    db.deleteMealPlan(req.params.id);
+    res.json({ success: true, deletedId: req.params.id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/meal-plans/clear', (req, res) => {
+  try {
+    db.clearMealPlans();
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 10. Activity & Audit Log
+apiRouter.get('/activity', (req, res) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : 40;
+    const logs = db.getActivityLogs(limit);
+    res.json({ success: true, count: logs.length, logs });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 11. Full JSON Backup & Restore
+apiRouter.get('/backup', (req, res) => {
+  try {
+    const snapshot = db.exportBackupJson();
+    res.json({ success: true, snapshot });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/restore', (req, res) => {
+  try {
+    const payload = req.body?.snapshot || req.body;
+    const restored = db.restoreBackupJson(payload);
+    res.json({ success: true, snapshot: restored });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 
 

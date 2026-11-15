@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Plus,
   Trash2,
+  CalendarDays,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays } from '../data/shelfLifeData';
@@ -25,6 +26,7 @@ import { RecipeService } from '../services/recipeService';
 import { aiService } from '../services/aiService';
 import { DietType, Recipe, CustomRecipe } from '../types/inventory';
 import { CustomRecipeModal } from './CustomRecipeModal';
+import { MealPrepPlanner } from './MealPrepPlanner';
 
 interface RecipesViewProps {
   initialExpiringItem?: string | null;
@@ -35,7 +37,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
   initialExpiringItem,
   onClearInitialExpiringItem,
 }) => {
-  const { items, customRecipes, preferences, markMultipleAsUsed, deleteCustomRecipe, cookCustomRecipe } =
+  const { items, customRecipes, mealPlans, preferences, markMultipleAsUsed, deleteCustomRecipe, cookCustomRecipe } =
     useInventory();
 
   const [dietFilter, setDietFilter] = useState<DietType>(preferences.diet || 'veg');
@@ -48,7 +50,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
 
   // Custom Recipe Modal state
   const [isCustomModalOpen, setIsCustomModalOpen] = useState(false);
-  const [recipeTab, setRecipeTab] = useState<'all' | 'expiring' | 'custom'>('all');
+  const [recipeTab, setRecipeTab] = useState<'all' | 'expiring' | 'custom' | 'planner'>('all');
   const [batchMultiplier, setBatchMultiplier] = useState<number>(1);
   const isCommercial = preferences.operationScale !== 'household';
 
@@ -414,56 +416,77 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
               {mappedCustomRecipes.length}
             </span>
           </button>
+
+          <button
+            onClick={() => setRecipeTab('planner')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+              recipeTab === 'planner'
+                ? 'bg-[#2C5F2D] text-white shadow-xs'
+                : 'text-stone-600 hover:bg-stone-100'
+            }`}
+          >
+            <CalendarDays className="w-3.5 h-3.5" />
+            <span>{isCommercial ? 'Prep Planner' : '7-Day Meal Plan'}</span>
+            {mealPlans.length > 0 && (
+              <span className="text-[10px] bg-[#A3E635] text-[#2C5F2D] font-black px-1.5 py-0.2 rounded-full">
+                {mealPlans.length}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Diet Filters & Search */}
-        <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
-          <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-[#E2E8DE] text-xs">
-            <span className="text-stone-400 text-[11px] px-2 font-semibold flex items-center gap-1">
-              <Filter className="w-3 h-3" /> Diet:
-            </span>
-            {(['veg', 'egg', 'non-veg'] as const).map((diet) => (
-              <button
-                key={diet}
-                onClick={() => setDietFilter(diet)}
-                className={`px-3 py-1.5 rounded-lg font-bold capitalize transition-all cursor-pointer ${
-                  dietFilter === diet
-                    ? 'bg-[#2C5F2D] text-white shadow-xs'
-                    : 'text-stone-600 hover:bg-stone-100'
-                }`}
-              >
-                {diet === 'veg' ? 'Pure Veg' : diet === 'egg' ? 'Eggetarian' : 'Non-Veg'}
-              </button>
-            ))}
-          </div>
+        {recipeTab !== 'planner' && (
+          <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
+            <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-[#E2E8DE] text-xs">
+              <span className="text-stone-400 text-[11px] px-2 font-semibold flex items-center gap-1">
+                <Filter className="w-3 h-3" /> Diet:
+              </span>
+              {(['veg', 'egg', 'non-veg'] as const).map((diet) => (
+                <button
+                  key={diet}
+                  onClick={() => setDietFilter(diet)}
+                  className={`px-3 py-1.5 rounded-lg font-bold capitalize transition-all cursor-pointer ${
+                    dietFilter === diet
+                      ? 'bg-[#2C5F2D] text-white shadow-xs'
+                      : 'text-stone-600 hover:bg-stone-100'
+                  }`}
+                >
+                  {diet === 'veg' ? 'Pure Veg' : diet === 'egg' ? 'Eggetarian' : 'Non-Veg'}
+                </button>
+              ))}
+            </div>
 
-          {/* Search Recipes */}
-          <div className="relative flex-1 sm:w-56">
-            <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchFilter}
-              onChange={(e) => setSearchFilter(e.target.value)}
-              placeholder="Search recipes, ingredients..."
-              className="w-full pl-9 pr-8 py-2 bg-white border border-[#E2E8DE] rounded-xl text-xs focus:ring-2 focus:ring-[#2C5F2D] focus:outline-none"
-            />
-            {searchFilter && (
-              <button
-                onClick={() => {
-                  setSearchFilter('');
-                  if (onClearInitialExpiringItem) onClearInitialExpiringItem();
-                }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-stone-400 hover:text-stone-700"
-              >
-                ✕
-              </button>
-            )}
+            {/* Search Recipes */}
+            <div className="relative flex-1 sm:w-56">
+              <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+                placeholder="Search recipes, ingredients..."
+                className="w-full pl-9 pr-8 py-2 bg-white border border-[#E2E8DE] rounded-xl text-xs focus:ring-2 focus:ring-[#2C5F2D] focus:outline-none"
+              />
+              {searchFilter && (
+                <button
+                  onClick={() => {
+                    setSearchFilter('');
+                    if (onClearInitialExpiringItem) onClearInitialExpiringItem();
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-stone-400 hover:text-stone-700"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* Recipes Cards Grid */}
-      {loading ? (
+      {/* 7-Day Meal & Batch Prep Planner OR Recipe Cards Grid */}
+      {recipeTab === 'planner' ? (
+        <MealPrepPlanner availableRecipes={[...mappedCustomRecipes, ...recipesList]} />
+      ) : loading ? (
         <div className="py-12 text-center text-xs text-stone-500">
           <ChefHat className="w-8 h-8 text-[#2C5F2D] mx-auto mb-2 animate-bounce" />
           Matching Indian dishes to your kitchen staples...

@@ -20,6 +20,7 @@ import {
   IndianRupee,
   RefreshCw,
   ShoppingCart,
+  History,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays } from '../data/shelfLifeData';
@@ -39,7 +40,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenScaleModal,
   onOpenRestockList,
 }) => {
-  const { items, restockList, addToRestockList, stats, markAsUsed, dbInfo, preferences, exportCsv } = useInventory();
+  const { items, restockList, activityLogs, addToRestockList, stats, markAsUsed, dbInfo, preferences, exportCsv } =
+    useInventory();
   const [usingItem, setUsingItem] = useState<InventoryItem | null>(null);
   const pendingBuyNames = new Set(restockList.filter((r) => r.status === 'pending').map((r) => r.name.toLowerCase()));
   const pendingBuyCount = restockList.filter((r) => r.status === 'pending').length;
@@ -513,6 +515,57 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           ))}
         </div>
       </div>
+
+      {/* Live Kitchen Activity & Audit Trail */}
+      {activityLogs.length > 0 && (
+        <div className="bg-white border border-[#E2E8DE] rounded-3xl p-5 shadow-xs space-y-3">
+          <div className="flex items-center justify-between pb-2 border-b border-stone-100">
+            <div className="flex items-center gap-2">
+              <History className="w-4 h-4 text-[#2C5F2D]" />
+              <h3 className="font-extrabold text-sm text-stone-900">
+                {isCommercial ? 'Recent Kitchen Audit & Operations Log' : 'Recent Kitchen Activity'}
+              </h3>
+            </div>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className="text-xs font-bold text-[#2C5F2D] hover:underline cursor-pointer"
+            >
+              View Full Log &rarr;
+            </button>
+          </div>
+
+          <div className="divide-y divide-stone-100">
+            {activityLogs.slice(0, 6).map((log) => (
+              <div key={log.id} className="py-2 flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase shrink-0 ${
+                      log.action === 'used' || log.action === 'restocked'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : log.action === 'frozen'
+                        ? 'bg-sky-100 text-sky-800'
+                        : log.action === 'expired'
+                        ? 'bg-rose-100 text-rose-800'
+                        : 'bg-stone-100 text-stone-700'
+                    }`}
+                  >
+                    {log.action}
+                  </span>
+                  <div className="min-w-0">
+                    <span className="font-bold text-stone-900">{log.itemName}</span>
+                    {log.details && (
+                      <span className="text-stone-500 ml-1.5">— {log.details}</span>
+                    )}
+                  </div>
+                </div>
+                <span className="text-[10px] text-stone-400 shrink-0 font-mono">
+                  {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Cooking & Portion Modal */}
       {usingItem && (

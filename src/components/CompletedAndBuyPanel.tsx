@@ -112,6 +112,19 @@ export const CompletedAndBuyPanel: React.FC = () => {
     [pendingBuyItems]
   );
 
+  const supplierGroups = useMemo(() => {
+    const groups: Record<string, { supplier: string; items: RestockItem[]; totalRs: number }> = {};
+    for (const r of pendingBuyItems) {
+      const key = (r.supplierName || 'General Market / Kirana').trim();
+      if (!groups[key]) {
+        groups[key] = { supplier: key, items: [], totalRs: 0 };
+      }
+      groups[key].items.push(r);
+      groups[key].totalRs += r.estimatedPrice && !isNaN(r.estimatedPrice) ? r.estimatedPrice : 0;
+    }
+    return Object.values(groups).sort((a, b) => b.totalRs - a.totalRs || b.items.length - a.items.length);
+  }, [pendingBuyItems]);
+
   const showToast = (msg: string) => {
     setBannerMsg(msg);
     setTimeout(() => setBannerMsg(null), 4000);
@@ -710,6 +723,55 @@ export const CompletedAndBuyPanel: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Section 1.5: Supplier / Vendor Order Split (when pending items exist) */}
+      {supplierGroups.length > 0 && (
+        <div className="bg-white border border-[#E2E8DE] rounded-3xl p-4 sm:p-5 shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="font-extrabold text-sm text-stone-900">
+              Supplier / Vendor Order Breakdown ({supplierGroups.length})
+            </h4>
+            <span className="text-[11px] text-stone-500">
+              Copy vendor-specific lists for WhatsApp or PO
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+            {supplierGroups.map((g) => (
+              <div
+                key={g.supplier}
+                className="p-3 rounded-2xl bg-[#F7F8F4] border border-[#E2E8DE] flex items-center justify-between gap-2 text-xs"
+              >
+                <div className="min-w-0">
+                  <p className="font-extrabold text-stone-900 truncate">{g.supplier}</p>
+                  <p className="text-[11px] text-stone-600 mt-0.5">
+                    {g.items.length} item{g.items.length > 1 ? 's' : ''}
+                    {g.totalRs > 0 ? ` • Est ₹${g.totalRs.toLocaleString('en-IN')}` : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const header = `${g.supplier} Order${preferences.organizationName ? ` — ${preferences.organizationName}` : ''}`;
+                    const lines = g.items.map(
+                      (it, idx) => `${idx + 1}. ${it.name} — ${it.targetQuantity} ${it.unit}${it.priority === 'urgent' ? ' [URGENT]' : ''}`
+                    );
+                    try {
+                      await navigator.clipboard.writeText(`${header}\n${lines.join('\n')}`);
+                      showToast(`Copied order for "${g.supplier}" (${g.items.length} items)!`);
+                    } catch {
+                      showToast('Could not access clipboard.');
+                    }
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-white hover:bg-[#EAF3E6] border border-stone-200 hover:border-[#6B9B4F] text-[#2C5F2D] font-bold text-[11px] shrink-0 flex items-center gap-1 cursor-pointer"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>Copy PO</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Section 2: Completed / Finished & Spoiled Items */}
       <div className="bg-white border border-[#E2E8DE] rounded-3xl p-4 sm:p-5 shadow-xs space-y-3">

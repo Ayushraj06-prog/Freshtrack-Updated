@@ -14,6 +14,8 @@ import {
   CustomRecipe,
   RestockItem,
   StockFromRestockPayload,
+  MealPlanEntry,
+  ActivityLogEntry,
 } from '../types/inventory';
 
 export const api = {
@@ -91,6 +93,15 @@ export const api = {
     return data.item;
   },
 
+  async freezeAndExtendItem(id: string): Promise<InventoryItem> {
+    const res = await fetch(`/api/items/${id}/freeze`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`Failed to freeze & extend: ${res.status}`);
+    const data = await res.json();
+    return data.item;
+  },
+
   async markMultipleAsUsed(ids: string[]): Promise<InventoryItem[]> {
     const res = await fetch('/api/items/bulk-use', {
       method: 'POST',
@@ -98,6 +109,28 @@ export const api = {
       body: JSON.stringify({ ids }),
     });
     if (!res.ok) throw new Error(`Failed to bulk use: ${res.status}`);
+    const data = await res.json();
+    return data.items || [];
+  },
+
+  async markMultipleAsExpired(ids: string[]): Promise<InventoryItem[]> {
+    const res = await fetch('/api/items/bulk-expire', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) throw new Error(`Failed to bulk expire: ${res.status}`);
+    const data = await res.json();
+    return data.items || [];
+  },
+
+  async markMultipleAsFrozen(ids: string[]): Promise<InventoryItem[]> {
+    const res = await fetch('/api/items/bulk-freeze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) throw new Error(`Failed to bulk freeze: ${res.status}`);
     const data = await res.json();
     return data.items || [];
   },
@@ -251,6 +284,64 @@ export const api = {
       body: JSON.stringify({ ids }),
     });
     if (!res.ok) throw new Error(`Failed to bulk stock restock items: ${res.status}`);
+    return await res.json();
+  },
+
+  // Weekly Meal & Prep Planner
+  async fetchMealPlans(): Promise<MealPlanEntry[]> {
+    const res = await fetch('/api/meal-plans');
+    if (!res.ok) throw new Error(`Failed to fetch meal plans: ${res.status}`);
+    const data = await res.json();
+    return data.plans || [];
+  },
+
+  async saveMealPlan(plan: Partial<MealPlanEntry>): Promise<MealPlanEntry> {
+    const res = await fetch('/api/meal-plans', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(plan),
+    });
+    if (!res.ok) throw new Error(`Failed to save meal plan: ${res.status}`);
+    const data = await res.json();
+    return data.plan;
+  },
+
+  async deleteMealPlan(id: string): Promise<boolean> {
+    const res = await fetch(`/api/meal-plans/${id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(`Failed to delete meal plan: ${res.status}`);
+    return true;
+  },
+
+  async clearMealPlans(): Promise<boolean> {
+    const res = await fetch('/api/meal-plans/clear', { method: 'POST' });
+    return res.ok;
+  },
+
+  // Activity Logs
+  async fetchActivityLogs(limit = 40): Promise<ActivityLogEntry[]> {
+    const res = await fetch(`/api/activity?limit=${limit}`);
+    if (!res.ok) throw new Error(`Failed to fetch activity logs: ${res.status}`);
+    const data = await res.json();
+    return data.logs || [];
+  },
+
+  // Full JSON Backup & Restore
+  async exportBackup(): Promise<any> {
+    const res = await fetch('/api/backup');
+    if (!res.ok) throw new Error(`Failed to export backup: ${res.status}`);
+    const data = await res.json();
+    return data.snapshot;
+  },
+
+  async restoreBackup(snapshot: any): Promise<any> {
+    const res = await fetch('/api/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ snapshot }),
+    });
+    if (!res.ok) throw new Error(`Failed to restore backup: ${res.status}`);
     return await res.json();
   },
 };
