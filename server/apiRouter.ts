@@ -276,4 +276,78 @@ apiRouter.post('/recipes/custom/:id/cook', (req, res) => {
   }
 });
 
+// 8. Restock / Need-to-Buy Procurement List
+apiRouter.get('/restock', (req, res) => {
+  try {
+    const items = db.getRestockList();
+    res.json({ success: true, count: items.length, items });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/restock', (req, res) => {
+  try {
+    const item = db.saveRestockItem(req.body);
+    res.status(201).json({ success: true, item });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.put('/restock/:id', (req, res) => {
+  try {
+    const updated = db.updateRestockItem(req.params.id, req.body);
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'Restock item not found' });
+    }
+    res.json({ success: true, item: updated });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/restock/:id', (req, res) => {
+  try {
+    db.deleteRestockItem(req.params.id);
+    res.json({ success: true, deletedId: req.params.id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/restock/sync', (req, res) => {
+  try {
+    const result = db.syncNeededRestockItems();
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/restock/bulk-stock', (req, res) => {
+  try {
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids)) {
+      return res.status(400).json({ success: false, error: 'ids must be an array' });
+    }
+    const result = db.bulkStockRestockItems(ids);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/restock/:id/stock', (req, res) => {
+  try {
+    const result = db.stockRestockItem(req.params.id, req.body || {});
+    if (!result) {
+      return res.status(404).json({ success: false, error: 'Restock item not found' });
+    }
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
 

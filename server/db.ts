@@ -106,6 +106,27 @@ sqliteDb.exec(`
     createdAt TEXT,
     updatedAt TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS restock_list (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    targetQuantity REAL NOT NULL,
+    unit TEXT NOT NULL,
+    storage TEXT NOT NULL,
+    estimatedPrice REAL,
+    supplierName TEXT,
+    branchZone TEXT,
+    parLevel REAL,
+    sourceItemId TEXT,
+    reason TEXT NOT NULL,
+    priority TEXT DEFAULT 'normal',
+    checked INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending',
+    notes TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  );
 `);
 
 // Safe migrations for existing preferences tables
@@ -569,7 +590,7 @@ export const db = {
 
     if (remainingQty <= 0 || portionFraction >= 0.98) {
       // Finished completely
-      return this.updateItem(id, {
+      const finished = this.updateItem(id, {
         status: 'used',
         quantity: 0,
         originalQuantity: origQty,
@@ -577,6 +598,38 @@ export const db = {
         usedAt: nowIso,
         notes: updatedNotes,
       });
+
+      // For restaurant & enterprise, automatically add finished item to Need-to-Buy restock queue if not already pending
+      try {
+        const prefs = this.getPreferences();
+        if (prefs.operationScale !== 'household') {
+          const existingPending = sqliteDb
+            .prepare("SELECT id FROM restock_list WHERE status = 'pending' AND LOWER(name) = LOWER(?)")
+            .get(existing.name) as any;
+          if (!existingPending) {
+            this.saveRestockItem({
+              name: existing.name,
+              category: existing.category,
+              targetQuantity: origQty,
+              unit: existing.unit,
+              storage: existing.storage,
+              estimatedPrice: existing.price,
+              supplierName: existing.supplierName ?? null,
+              branchZone: existing.branchZone ?? (prefs.branchLocation || null),
+              parLevel: existing.parLevel ?? null,
+              sourceItemId: existing.id,
+              reason: 'completed',
+              priority: existing.parLevel !== null && existing.parLevel !== undefined ? 'urgent' : 'normal',
+              checked: false,
+              status: 'pending',
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Auto-queue restock skipped:', err);
+      }
+
+      return finished;
     } else {
       // Partially used - remains active with updated quantity!
       return this.updateItem(id, {
@@ -849,7 +902,270 @@ export const db = {
       updatedItems,
     };
   },
+
+  // ---------------- Restock / Need-to-Buy Procurement List ----------------
+  getRestockList() {
+    const stmt = sqliteDb.prepare(
+      "SELECT * FROM restock_list ORDER BY CASE WHEN status = 'pending' THEN 0 ELSE 1 END, CASE WHEN priority = 'urgent' THEN 0 ELSE 1 END, createdAt DESC"
+    );
+    return (stmt.all() as any[]).map(mapRestockItem);
+  },
+
+  getRestockItemById(id: string) {
+    const row = sqliteDb.prepare('SELECT * FROM restock_list WHERE id = ?').get(id);
+    return row ? mapRestockItem(row) : null;
+  },
+
+  saveRestockItem(entry: any) {
+    const nowIso = new Date().toISOString();
+    const targetQty = Number(entry.targetQuantity) > 0 ? Number(entry.targetQuantity) : 1;
+    const prepared = {
+      id: entry.id || `restock-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      name: String(entry.name || '').trim() || 'Kitchen Item',
+      category: entry.category || 'Other',
+      targetQuantity: targetQty,
+      unit: entry.unit || 'pack',
+      storage: entry.storage || 'fridge',
+      estimatedPrice:
+        entry.estimatedPrice !== null && entry.estimatedPrice !== undefined && !isNaN(Number(entry.estimatedPrice))
+          ? Number(entry.estimatedPrice)
+          : null,
+      supplierName: entry.supplierName ?? null,
+      branchZone: entry.branchZone ?? null,
+      parLevel:
+        entry.parLevel !== null && entry.parLevel !== undefined && !isNaN(Number(entry.parLevel))
+          ? Number(entry.parLevel)
+          : null,
+      sourceItemId: entry.sourceItemId ?? null,
+      reason: entry.reason || 'manual',
+      priority: entry.priority === 'urgent' ? 'urgent' : 'normal',
+      checked: entry.checked ? 1 : 0,
+      status: entry.status === 'stocked' ? 'stocked' : 'pending',
+      notes: entry.notes ?? null,
+      createdAt: entry.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    sqliteDb
+      .prepare(
+        `
+      INSERT OR REPLACE INTO restock_list (
+        id, name, category, targetQuantity, unit, storage, estimatedPrice,
+        supplierName, branchZone, parLevel, sourceItemId, reason, priority,
+        checked, status, notes, createdAt, updatedAt
+      ) VALUES (
+        @id, @name, @category, @targetQuantity, @unit, @storage, @estimatedPrice,
+        @supplierName, @branchZone, @parLevel, @sourceItemId, @reason, @priority,
+        @checked, @status, @notes, @createdAt, @updatedAt
+      )
+    `
+      )
+      .run(prepared);
+
+    return mapRestockItem(prepared);
+  },
+
+  updateRestockItem(id: string, updates: any) {
+    const existing = this.getRestockItemById(id);
+    if (!existing) return null;
+
+    const merged = {
+      ...existing,
+      ...updates,
+      id,
+      targetQuantity:
+        updates.targetQuantity !== undefined && Number(updates.targetQuantity) > 0
+          ? Number(updates.targetQuantity)
+          : existing.targetQuantity,
+      estimatedPrice:
+        updates.estimatedPrice !== undefined
+          ? updates.estimatedPrice !== null && !isNaN(Number(updates.estimatedPrice))
+            ? Number(updates.estimatedPrice)
+            : null
+          : existing.estimatedPrice,
+      parLevel:
+        updates.parLevel !== undefined
+          ? updates.parLevel !== null && !isNaN(Number(updates.parLevel))
+            ? Number(updates.parLevel)
+            : null
+          : existing.parLevel ?? null,
+      supplierName: (updates.supplierName !== undefined ? updates.supplierName : existing.supplierName) ?? null,
+      branchZone: (updates.branchZone !== undefined ? updates.branchZone : existing.branchZone) ?? null,
+      notes: (updates.notes !== undefined ? updates.notes : existing.notes) ?? null,
+      checked: updates.checked !== undefined ? Boolean(updates.checked) : existing.checked,
+      status: updates.status ?? existing.status,
+      priority: updates.priority ?? existing.priority,
+    };
+
+    return this.saveRestockItem(merged);
+  },
+
+  deleteRestockItem(id: string) {
+    sqliteDb.prepare('DELETE FROM restock_list WHERE id = ?').run(id);
+    return true;
+  },
+
+  stockRestockItem(id: string, overrides: any = {}) {
+    const restock = this.getRestockItemById(id);
+    if (!restock) return null;
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const defaultDays = defaultShelfLifeDays(restock.category, overrides.storage || restock.storage);
+    const defaultExpiry = formatDateOffset(defaultDays);
+
+    const qty =
+      overrides.quantity !== undefined && Number(overrides.quantity) > 0
+        ? Number(overrides.quantity)
+        : restock.targetQuantity;
+
+    const stockedItem = this.insertItem({
+      name: restock.name,
+      category: restock.category,
+      quantity: qty,
+      originalQuantity: qty,
+      unit: overrides.unit || restock.unit,
+      purchaseDate: todayStr,
+      estimatedExpiryDate: overrides.estimatedExpiryDate || defaultExpiry,
+      storage: overrides.storage || restock.storage,
+      price:
+        overrides.price !== undefined
+          ? overrides.price
+          : restock.estimatedPrice,
+      status: 'active',
+      source: 'manual',
+      batchCode: overrides.batchCode ?? null,
+      supplierName: (overrides.supplierName !== undefined ? overrides.supplierName : restock.supplierName) ?? null,
+      parLevel: (overrides.parLevel !== undefined ? overrides.parLevel : restock.parLevel) ?? null,
+      branchZone: (overrides.branchZone !== undefined ? overrides.branchZone : restock.branchZone) ?? null,
+      notes: `Restocked from Buy List (${restock.reason})`,
+    });
+
+    const updatedRestock = this.updateRestockItem(id, {
+      status: 'stocked',
+      checked: false,
+    });
+
+    return {
+      stockedItem,
+      restockItem: updatedRestock,
+    };
+  },
+
+  bulkStockRestockItems(ids: string[]) {
+    const stockedItems: any[] = [];
+    const restockItems: any[] = [];
+
+    for (const id of ids) {
+      const result = this.stockRestockItem(id);
+      if (result) {
+        stockedItems.push(result.stockedItem);
+        restockItems.push(result.restockItem);
+      }
+    }
+
+    return { stockedItems, restockItems };
+  },
+
+  syncNeededRestockItems() {
+    const allItems = this.getAllItems();
+    const pendingList = this.getRestockList().filter((r) => r.status === 'pending');
+    const pendingNames = new Set(pendingList.map((r) => r.name.toLowerCase()));
+    const activeNames = new Set(allItems.filter((i) => i.status === 'active').map((i) => i.name.toLowerCase()));
+    const prefs = this.getPreferences();
+
+    const added: any[] = [];
+
+    for (const item of allItems) {
+      const lowerName = item.name.toLowerCase();
+      if (pendingNames.has(lowerName)) continue;
+
+      const isLowStock =
+        item.status === 'active' &&
+        item.parLevel !== null &&
+        item.parLevel !== undefined &&
+        Number(item.quantity) <= Number(item.parLevel);
+
+      const isCompletedMissing =
+        (item.status === 'used' || item.status === 'expired' || Number(item.quantity) <= 0) &&
+        !activeNames.has(lowerName);
+
+      if (isLowStock || isCompletedMissing) {
+        const targetQty = isLowStock
+          ? Math.max(Number(item.originalQuantity || item.parLevel || 1), Number(item.parLevel || 1) * 2 - Number(item.quantity))
+          : Number(item.originalQuantity || item.quantity || 1);
+
+        const created = this.saveRestockItem({
+          name: item.name,
+          category: item.category,
+          targetQuantity: targetQty > 0 ? targetQty : 1,
+          unit: item.unit,
+          storage: item.storage,
+          estimatedPrice: item.price,
+          supplierName: item.supplierName ?? null,
+          branchZone: item.branchZone ?? (prefs.branchLocation || null),
+          parLevel: item.parLevel ?? null,
+          sourceItemId: item.id,
+          reason: isLowStock ? 'low-stock' : item.status === 'expired' ? 'expired' : 'completed',
+          priority: isLowStock ? 'urgent' : 'normal',
+          checked: false,
+          status: 'pending',
+        });
+
+        pendingNames.add(lowerName);
+        added.push(created);
+      }
+    }
+
+    return {
+      addedCount: added.length,
+      items: this.getRestockList(),
+    };
+  },
 };
+
+function defaultShelfLifeDays(category: string, storage: string): number {
+  const table: Record<string, { fridge: number; pantry: number; freezer: number }> = {
+    Dairy: { fridge: 5, pantry: 1, freezer: 30 },
+    'Leafy Greens': { fridge: 4, pantry: 1, freezer: 14 },
+    Vegetables: { fridge: 7, pantry: 4, freezer: 60 },
+    Fruits: { fridge: 6, pantry: 3, freezer: 60 },
+    'Bakery & Bread': { fridge: 7, pantry: 4, freezer: 60 },
+    'Cooked Leftovers': { fridge: 3, pantry: 1, freezer: 30 },
+    'Eggs, Meat & Poultry': { fridge: 14, pantry: 1, freezer: 90 },
+    'Pulses & Dal': { fridge: 365, pantry: 180, freezer: 365 },
+    'Grains & Flours': { fridge: 180, pantry: 120, freezer: 365 },
+    'Spices & Condiments': { fridge: 365, pantry: 240, freezer: 365 },
+    'Snacks & Packaged': { fridge: 180, pantry: 120, freezer: 180 },
+    Beverages: { fridge: 10, pantry: 90, freezer: 90 },
+  };
+  const rule = table[category] || { fridge: 7, pantry: 14, freezer: 60 };
+  if (storage === 'pantry') return rule.pantry;
+  if (storage === 'freezer') return rule.freezer;
+  return rule.fridge;
+}
+
+function mapRestockItem(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    category: row.category,
+    targetQuantity: Number(row.targetQuantity) || 1,
+    unit: row.unit || 'pack',
+    storage: row.storage || 'fridge',
+    estimatedPrice: row.estimatedPrice !== null && row.estimatedPrice !== undefined ? Number(row.estimatedPrice) : null,
+    supplierName: row.supplierName || undefined,
+    branchZone: row.branchZone || undefined,
+    parLevel: row.parLevel !== null && row.parLevel !== undefined ? Number(row.parLevel) : null,
+    sourceItemId: row.sourceItemId || undefined,
+    reason: row.reason || 'manual',
+    priority: row.priority === 'urgent' ? 'urgent' : 'normal',
+    checked: Boolean(row.checked),
+    status: row.status === 'stocked' ? 'stocked' : 'pending',
+    notes: row.notes || undefined,
+    createdAt: row.createdAt || undefined,
+    updatedAt: row.updatedAt || undefined,
+  };
+}
 
 function mapCustomRecipe(row: any) {
   let ingredients = [];

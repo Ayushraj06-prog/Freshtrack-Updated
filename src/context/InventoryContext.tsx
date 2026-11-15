@@ -13,11 +13,14 @@ import {
   DbInfo,
   UseItemPayload,
   CustomRecipe,
+  RestockItem,
+  StockFromRestockPayload,
 } from '../types/inventory';
 
 interface InventoryContextType {
   items: InventoryItem[];
   customRecipes: CustomRecipe[];
+  restockList: RestockItem[];
   preferences: UserPreferences;
   dbInfo: DbInfo | null;
   dbConnected: boolean;
@@ -35,6 +38,12 @@ interface InventoryContextType {
     id: string,
     deductions: { itemId: string; portion?: number; usedQuantity?: number; usedPortionName?: string }[]
   ) => Promise<void>;
+  addToRestockList: (item: Partial<RestockItem>) => Promise<RestockItem>;
+  updateRestockItem: (id: string, updates: Partial<RestockItem>) => Promise<void>;
+  removeFromRestockItem: (id: string) => Promise<void>;
+  syncNeededRestock: () => Promise<number>;
+  stockFromRestockList: (id: string, overrides?: StockFromRestockPayload) => Promise<InventoryItem>;
+  bulkStockFromRestockList: (ids: string[]) => Promise<InventoryItem[]>;
   updatePreferences: (updates: Partial<UserPreferences>) => Promise<void>;
   seedDemoData: () => Promise<void>;
   clearAllData: () => Promise<void>;
@@ -61,6 +70,7 @@ const InventoryContext = createContext<InventoryContextType | undefined>(undefin
 export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [customRecipes, setCustomRecipes] = useState<CustomRecipe[]>([]);
+  const [restockList, setRestockList] = useState<RestockItem[]>([]);
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFS);
   const [dbInfo, setDbInfo] = useState<DbInfo | null>(null);
   const [dbConnected, setDbConnected] = useState<boolean>(false);
@@ -71,16 +81,18 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Load state from backend SQLite database on mount
   const refreshBackendData = async () => {
     try {
-      const [backendItems, backendPrefs, info, customRecs] = await Promise.all([
+      const [backendItems, backendPrefs, info, customRecs, backendRestock] = await Promise.all([
         api.fetchItems(),
         api.fetchPreferences(),
         api.getDbInfo(),
         api.fetchCustomRecipes().catch(() => []),
+        api.fetchRestockList().catch(() => []),
       ]);
       setItems(backendItems);
       if (backendPrefs) setPreferences(backendPrefs);
       setDbInfo(info);
       setCustomRecipes(customRecs || []);
+      setRestockList(backendRestock || []);
       setDbConnected(true);
     } catch (err) {
       console.warn('Backend DB initial sync retry:', err);
@@ -245,6 +257,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setItems((prev) => prev.map((i) => (i.id === id ? serverUpdated : i)));
       }
       api.getDbInfo().then(setDbInfo).catch(() => {});
+      api.fetchRestockList().then(setRestockList).catch(() => {});
     } catch (err) {
       console.error('Failed to mark item as used in backend DB:', err);
     }
@@ -259,6 +272,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     try {
       await api.markMultipleAsUsed(ids);
       api.getDbInfo().then(setDbInfo).catch(() => {});
+      api.fetchRestockList().then(setRestockList).catch(() => {});
     } catch (err) {
       console.error('Failed to mark multiple items as used in DB:', err);
     }
@@ -316,6 +330,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setCustomRecipes((prev) => prev.map((r) => (r.id === id ? res.recipe : r)));
       }
       api.getDbInfo().then(setDbInfo).catch(() => {});
+      api.fetchRestockList().then(setRestockList).catch(() => {});
     } catch (err) {
       console.error('Failed to log custom recipe cooking:', err);
       for (const d of deductions) {
@@ -326,6 +341,69 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
       }
     }
+  };
+
+  const addToRestockList = async (item: Partial<RestockItem>): Promise<RestockItem> => {
+    const saved = await api.saveRestockItem(item);
+    setRestockList((prev) => {
+      const idx = prev.findIndex((r) => r.id === saved.id);
+      if (idx !== -1) return prev.map((r) => (r.id === saved.id ? saved : r));
+      return [saved, ...prev];
+    });
+    return saved;
+  };
+
+  const updateRestockItem = async (id: string, updates: Partial<RestockItem>) => {
+    setRestockList((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+    try {
+      const updated = await api.updateRestockItem(id, updates);
+      setRestockList((prev) => prev.map((r) => (r.id === id ? updated : r)));
+    } catch (err) {
+      console.error('Failed to update restock item:', err);
+    }
+  };
+
+  const removeFromRestockItem = async (id: string) => {
+    setRestockList((prev) => prev.filter((r) => r.id !== id));
+    try {
+      await api.deleteRestockItem(id);
+    } catch (err) {
+      console.error('Failed to delete restock item:', err);
+    }
+  };
+
+  const syncNeededRestock = async (): Promise<number> => {
+    const res = await api.syncNeededRestockItems();
+    setRestockList(res.items || []);
+    return res.addedCount || 0;
+  };
+
+  const stockFromRestockList = async (
+    id: string,
+    overrides?: StockFromRestockPayload
+  ): Promise<InventoryItem> => {
+    const res = await api.stockRestockItem(id, overrides);
+    if (res.stockedItem) {
+      setItems((prev) => [res.stockedItem, ...prev]);
+    }
+    if (res.restockItem) {
+      setRestockList((prev) => prev.map((r) => (r.id === id ? res.restockItem : r)));
+    }
+    api.getDbInfo().then(setDbInfo).catch(() => {});
+    return res.stockedItem;
+  };
+
+  const bulkStockFromRestockList = async (ids: string[]): Promise<InventoryItem[]> => {
+    const res = await api.bulkStockRestockItems(ids);
+    if (res.stockedItems && res.stockedItems.length > 0) {
+      setItems((prev) => [...res.stockedItems, ...prev]);
+    }
+    if (res.restockItems && res.restockItems.length > 0) {
+      const updatedMap = new Map(res.restockItems.map((r) => [r.id, r]));
+      setRestockList((prev) => prev.map((r) => updatedMap.get(r.id) || r));
+    }
+    api.getDbInfo().then(setDbInfo).catch(() => {});
+    return res.stockedItems || [];
   };
 
   const updatePreferences = async (updates: Partial<UserPreferences>) => {
@@ -508,6 +586,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       value={{
         items,
         customRecipes,
+        restockList,
         preferences,
         dbInfo,
         dbConnected,
@@ -522,6 +601,12 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         saveCustomRecipe,
         deleteCustomRecipe,
         cookCustomRecipe,
+        addToRestockList,
+        updateRestockItem,
+        removeFromRestockItem,
+        syncNeededRestock,
+        stockFromRestockList,
+        bulkStockFromRestockList,
         updatePreferences,
         seedDemoData,
         clearAllData,

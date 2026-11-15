@@ -168,3 +168,38 @@ export interface DbInfo {
   usedCount: number;
   recipesCount?: number;
 }
+
+export type RestockReason = 'completed' | 'low-stock' | 'expired' | 'manual';
+
+export interface RestockItem {
+  id: string;
+  name: string;
+  category: ItemCategory;
+  targetQuantity: number;
+  unit: string;
+  storage: StorageLocation;
+  estimatedPrice: number | null;
+  supplierName?: string | null;
+  branchZone?: string | null;
+  parLevel?: number | null;
+  sourceItemId?: string | null;
+  reason: RestockReason;
+  priority: 'urgent' | 'normal';
+  checked: boolean;
+  status: 'pending' | 'stocked';
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StockFromRestockPayload {
+  quantity?: number;
+  unit?: string;
+  price?: number | null;
+  storage?: StorageLocation;
+  estimatedExpiryDate?: string;
+  batchCode?: string | null;
+  supplierName?: string | null;
+  parLevel?: number | null;
+  branchZone?: string | null;
+}

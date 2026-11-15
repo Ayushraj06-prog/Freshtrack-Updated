@@ -6,7 +6,15 @@
  * Typed client for interacting with the backend SQLite database.
  */
 
-import { InventoryItem, UserPreferences, InventoryStats, DbInfo, CustomRecipe } from '../types/inventory';
+import {
+  InventoryItem,
+  UserPreferences,
+  InventoryStats,
+  DbInfo,
+  CustomRecipe,
+  RestockItem,
+  StockFromRestockPayload,
+} from '../types/inventory';
 
 export const api = {
   async getDbInfo(): Promise<DbInfo> {
@@ -172,6 +180,77 @@ export const api = {
       body: JSON.stringify({ deductions }),
     });
     if (!res.ok) throw new Error(`Failed to log cooking of custom recipe: ${res.status}`);
+    return await res.json();
+  },
+
+  // Restock / Need-to-Buy Procurement List
+  async fetchRestockList(): Promise<RestockItem[]> {
+    const res = await fetch('/api/restock');
+    if (!res.ok) throw new Error(`Failed to fetch restock list: ${res.status}`);
+    const data = await res.json();
+    return data.items || [];
+  },
+
+  async saveRestockItem(item: Partial<RestockItem>): Promise<RestockItem> {
+    const res = await fetch('/api/restock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(item),
+    });
+    if (!res.ok) throw new Error(`Failed to save restock item: ${res.status}`);
+    const data = await res.json();
+    return data.item;
+  },
+
+  async updateRestockItem(id: string, updates: Partial<RestockItem>): Promise<RestockItem> {
+    const res = await fetch(`/api/restock/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) throw new Error(`Failed to update restock item: ${res.status}`);
+    const data = await res.json();
+    return data.item;
+  },
+
+  async deleteRestockItem(id: string): Promise<boolean> {
+    const res = await fetch(`/api/restock/${id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(`Failed to delete restock item: ${res.status}`);
+    return true;
+  },
+
+  async syncNeededRestockItems(): Promise<{ addedCount: number; items: RestockItem[] }> {
+    const res = await fetch('/api/restock/sync', {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`Failed to sync needed restock items: ${res.status}`);
+    return await res.json();
+  },
+
+  async stockRestockItem(
+    id: string,
+    overrides?: StockFromRestockPayload
+  ): Promise<{ stockedItem: InventoryItem; restockItem: RestockItem }> {
+    const res = await fetch(`/api/restock/${id}/stock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(overrides || {}),
+    });
+    if (!res.ok) throw new Error(`Failed to stock restock item: ${res.status}`);
+    return await res.json();
+  },
+
+  async bulkStockRestockItems(
+    ids: string[]
+  ): Promise<{ stockedItems: InventoryItem[]; restockItems: RestockItem[] }> {
+    const res = await fetch('/api/restock/bulk-stock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+    if (!res.ok) throw new Error(`Failed to bulk stock restock items: ${res.status}`);
     return await res.json();
   },
 };

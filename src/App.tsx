@@ -29,9 +29,15 @@ import { OperationScale } from './types/inventory';
 function MainApp() {
   const { preferences, updatePreferences, dbConnected } = useInventory();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'recipes' | 'settings'>('inventory');
+  const [inventoryStatusJump, setInventoryStatusJump] = useState<'active' | 'urgent' | 'low-stock' | 'used' | 'restock' | 'all' | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isDigestOpen, setIsDigestOpen] = useState(false);
   const [isScaleModalOpen, setIsScaleModalOpen] = useState(false);
+
+  const openRestockPanel = () => {
+    setInventoryStatusJump('restock');
+    setActiveTab('inventory');
+  };
 
   const handleQuickScaleSelect = async (scale: OperationScale) => {
     const defaultBudget = scale === 'enterprise' ? 50000 : scale === 'restaurant' ? 15000 : 1500;
@@ -211,6 +217,8 @@ function MainApp() {
           <InventoryView
             onOpenAddModal={() => setIsAddModalOpen(true)}
             setActiveTab={(t) => setActiveTab(t as any)}
+            initialStatusFilter={inventoryStatusJump}
+            onClearStatusJump={() => setInventoryStatusJump(null)}
           />
         )}
         {activeTab === 'dashboard' && (
@@ -218,6 +226,7 @@ function MainApp() {
             setActiveTab={(t) => setActiveTab(t as any)}
             onOpenAddModal={() => setIsAddModalOpen(true)}
             onOpenScaleModal={() => setIsScaleModalOpen(true)}
+            onOpenRestockList={openRestockPanel}
           />
         )}
         {activeTab === 'recipes' && <RecipesView />}

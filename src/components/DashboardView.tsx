@@ -19,6 +19,7 @@ import {
   SlidersHorizontal,
   IndianRupee,
   RefreshCw,
+  ShoppingCart,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays } from '../data/shelfLifeData';
@@ -29,15 +30,19 @@ interface DashboardViewProps {
   setActiveTab: (tab: string) => void;
   onOpenAddModal: () => void;
   onOpenScaleModal?: () => void;
+  onOpenRestockList?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   setActiveTab,
   onOpenAddModal,
   onOpenScaleModal,
+  onOpenRestockList,
 }) => {
-  const { items, stats, markAsUsed, dbInfo, preferences, exportCsv } = useInventory();
+  const { items, restockList, addToRestockList, stats, markAsUsed, dbInfo, preferences, exportCsv } = useInventory();
   const [usingItem, setUsingItem] = useState<InventoryItem | null>(null);
+  const pendingBuyNames = new Set(restockList.filter((r) => r.status === 'pending').map((r) => r.name.toLowerCase()));
+  const pendingBuyCount = restockList.filter((r) => r.status === 'pending').length;
 
   const scale = preferences.operationScale || 'household';
   const isCommercial = scale !== 'household';
@@ -293,7 +298,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       {/* Low-Stock Reorder Alerts (Restaurant & Enterprise) */}
       {isCommercial && lowStockItems.length > 0 && (
         <div className="bg-rose-50 border border-rose-200 rounded-3xl p-5 shadow-xs space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <RefreshCw className="w-4 h-4 text-rose-600" />
               <h3 className="font-extrabold text-sm text-rose-950">
@@ -301,33 +306,66 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </h3>
             </div>
             <button
-              onClick={() => setActiveTab('inventory')}
-              className="text-xs font-bold text-rose-900 hover:underline cursor-pointer"
+              onClick={() => (onOpenRestockList ? onOpenRestockList() : setActiveTab('inventory'))}
+              className="px-3 py-1.5 rounded-xl bg-rose-900 hover:bg-rose-950 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
             >
-              Manage Stock &rarr;
+              <ShoppingCart className="w-3.5 h-3.5" />
+              <span>Open Buy &amp; Restock List ({pendingBuyCount})</span>
             </button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-            {lowStockItems.slice(0, 6).map((item) => (
-              <div
-                key={item.id}
-                className="bg-white p-3 rounded-2xl border border-rose-200 flex items-center justify-between gap-2 text-xs"
-              >
-                <div className="min-w-0">
-                  <p className="font-bold text-stone-900 truncate">{item.name}</p>
-                  <p className="text-[11px] text-rose-700 font-semibold">
-                    Stock: {item.quantity} {item.unit} (Par: {item.parLevel} {item.unit})
-                  </p>
-                  {item.supplierName && (
-                    <p className="text-[10px] text-stone-500 truncate">Supplier: {item.supplierName}</p>
-                  )}
+            {lowStockItems.slice(0, 6).map((item) => {
+              const alreadyQueued = pendingBuyNames.has(item.name.toLowerCase());
+              return (
+                <div
+                  key={item.id}
+                  className="bg-white p-3 rounded-2xl border border-rose-200 flex items-center justify-between gap-2 text-xs"
+                >
+                  <div className="min-w-0">
+                    <p className="font-bold text-stone-900 truncate">{item.name}</p>
+                    <p className="text-[11px] text-rose-700 font-semibold">
+                      Stock: {item.quantity} {item.unit} (Par: {item.parLevel} {item.unit})
+                    </p>
+                    {item.supplierName && (
+                      <p className="text-[10px] text-stone-500 truncate">Supplier: {item.supplierName}</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (alreadyQueued) {
+                        onOpenRestockList?.();
+                      } else {
+                        const targetPar = item.parLevel ?? Math.max(Number(item.quantity) || 1, 1);
+                        const qtyToBuy = Math.max(Math.ceil(targetPar * 2 - Number(item.quantity)), 1);
+                        addToRestockList({
+                          name: item.name,
+                          category: item.category,
+                          targetQuantity: qtyToBuy,
+                          unit: item.unit,
+                          storage: item.storage,
+                          estimatedPrice: item.price ?? null,
+                          supplierName: item.supplierName,
+                          parLevel: item.parLevel,
+                          branchZone: item.branchZone,
+                          reason: 'low-stock',
+                          priority: 'urgent',
+                          sourceItemId: item.id,
+                        });
+                      }
+                    }}
+                    className={`px-2.5 py-1.5 rounded-xl text-[10px] font-black shrink-0 transition-colors cursor-pointer ${
+                      alreadyQueued
+                        ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                        : 'bg-rose-100 text-rose-800 hover:bg-rose-200'
+                    }`}
+                  >
+                    {alreadyQueued ? 'In Buy List' : '+ Buy List'}
+                  </button>
                 </div>
-                <span className="px-2 py-1 rounded-lg bg-rose-100 text-rose-800 text-[10px] font-black shrink-0">
-                  REORDER
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
