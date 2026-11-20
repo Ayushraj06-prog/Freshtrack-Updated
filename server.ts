@@ -7,6 +7,7 @@
  */
 
 import express from 'express';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
@@ -21,6 +22,7 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
+  const httpServer = http.createServer(app);
   const PORT = Number(process.env.PORT) || 3000;
   const isProd = process.env.NODE_ENV === 'production';
 
@@ -41,11 +43,14 @@ async function startServer() {
   // Development vs Production
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
+    const hmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR !== 'true',
-        watch: process.env.DISABLE_HMR === 'true' ? null : {},
+        allowedHosts: true,
+        hmr: !hmrDisabled,
+        ws: { server: httpServer },
+        watch: hmrDisabled ? null : {},
       },
       appType: 'spa',
     });
@@ -58,7 +63,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`[FreshTrack] 🚀 Server running at http://0.0.0.0:${PORT}`);
     console.log(`[FreshTrack] 🗄️ Database: SQLite engine active in data/freshtrack.db`);
   });
