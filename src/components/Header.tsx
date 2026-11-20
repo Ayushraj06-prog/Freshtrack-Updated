@@ -15,8 +15,10 @@ import {
   Home,
   UtensilsCrossed,
   Building2,
+  Search,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   activeTab: string;
@@ -24,6 +26,7 @@ interface HeaderProps {
   onOpenMorningDigest: () => void;
   onOpenAddModal: () => void;
   onOpenScaleModal: () => void;
+  onOpenCommandPalette?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -32,6 +35,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenMorningDigest,
   onOpenAddModal,
   onOpenScaleModal,
+  onOpenCommandPalette,
 }) => {
   const { stats, notificationLog, dbConnected, dbInfo, preferences } = useInventory();
   const [showNotifications, setShowNotifications] = useState(false);
@@ -81,6 +85,25 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Status Indicators & Download ZIP Button */}
         <div className="flex items-center gap-2">
+          {/* Quick Search / Voice Command Palette Trigger */}
+          {onOpenCommandPalette && (
+            <button
+              type="button"
+              onClick={onOpenCommandPalette}
+              title="Quick Search, Commands & Voice Stock Entry (Ctrl+K)"
+              className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-[#F7F8F4] hover:bg-[#EAF3E6] text-stone-700 border border-[#E2E8DE] transition-colors cursor-pointer flex items-center gap-1.5"
+            >
+              <Search className="w-3.5 h-3.5 text-[#2C5F2D]" />
+              <span className="hidden lg:inline">Quick Add / Search</span>
+              <kbd className="hidden md:inline-block px-1.5 py-0.5 text-[10px] font-mono font-bold text-stone-500 bg-white border border-stone-200 rounded-md">
+                ⌘K
+              </kbd>
+            </button>
+          )}
+
+          {/* In-App PWA Install Button (hidden when already installed) */}
+          <PWAInstallButton />
+
           {/* Operation Scale Switcher Pill */}
           <button
             type="button"

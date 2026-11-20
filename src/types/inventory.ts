@@ -227,3 +227,68 @@ export interface ActivityLogEntry {
   timestamp: string;
 }
 
+export interface Supplier {
+  id: string;
+  name: string;
+  contactName?: string | null;
+  phone?: string | null;
+  whatsapp?: string | null;
+  email?: string | null;
+  categories?: string | null;
+  leadTimeDays: number;
+  paymentTerms?: string | null;
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type StorageZoneType = 'fridge' | 'freezer' | 'pantry' | 'hot-hold';
+
+export interface StorageLog {
+  id: string;
+  zoneName: string;
+  zoneType: StorageZoneType;
+  temperatureC: number;
+  humidityPct?: number | null;
+  status: 'pass' | 'warning' | 'alert';
+  checkedBy?: string | null;
+  branchZone?: string | null;
+  notes?: string | null;
+  loggedAt: string;
+}
+
+export type ChecklistCategory = 'opening' | 'closing' | 'hygiene' | 'handover';
+
+export interface ChecklistItem {
+  id: string;
+  title: string;
+  category: ChecklistCategory;
+  completed: boolean;
+  completedAt?: string | null;
+  assignedTo?: string | null;
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TransferItemPayload {
+  quantity: number;
+  targetStorage: StorageLocation;
+  targetBranchZone?: string | null;
+  notes?: string | null;
+}
+
+export interface StocktakeEntryPayload {
+  itemId: string;
+  actualQuantity: number;
+  zeroDisposition?: 'used' | 'expired';
+  addShortageToBuyList?: boolean;
+}
+
+export interface StocktakeResult {
+  adjustedCount: number;
+  shortageCount: number;
+  totalVarianceRs: number;
+  items: InventoryItem[];
+  restockList: RestockItem[];
+}

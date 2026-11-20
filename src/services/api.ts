@@ -16,6 +16,12 @@ import {
   StockFromRestockPayload,
   MealPlanEntry,
   ActivityLogEntry,
+  Supplier,
+  StorageLog,
+  ChecklistItem,
+  TransferItemPayload,
+  StocktakeEntryPayload,
+  StocktakeResult,
 } from '../types/inventory';
 
 export const api = {
@@ -344,5 +350,118 @@ export const api = {
     if (!res.ok) throw new Error(`Failed to restore backup: ${res.status}`);
     return await res.json();
   },
-};
 
+  // Suppliers Directory
+  async fetchSuppliers(): Promise<Supplier[]> {
+    const res = await fetch('/api/suppliers');
+    if (!res.ok) throw new Error(`Failed to fetch suppliers: ${res.status}`);
+    const data = await res.json();
+    return data.suppliers || [];
+  },
+
+  async saveSupplier(supplier: Partial<Supplier>): Promise<Supplier> {
+    const res = await fetch('/api/suppliers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(supplier),
+    });
+    if (!res.ok) throw new Error(`Failed to save supplier: ${res.status}`);
+    const data = await res.json();
+    return data.supplier;
+  },
+
+  async deleteSupplier(id: string): Promise<boolean> {
+    const res = await fetch(`/api/suppliers/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Failed to delete supplier: ${res.status}`);
+    return true;
+  },
+
+  // Storage Temperature & Hygiene Logs
+  async fetchStorageLogs(limit = 60): Promise<StorageLog[]> {
+    const res = await fetch(`/api/storage-logs?limit=${limit}`);
+    if (!res.ok) throw new Error(`Failed to fetch storage logs: ${res.status}`);
+    const data = await res.json();
+    return data.logs || [];
+  },
+
+  async addStorageLog(entry: Partial<StorageLog>): Promise<StorageLog> {
+    const res = await fetch('/api/storage-logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+    if (!res.ok) throw new Error(`Failed to add storage log: ${res.status}`);
+    const data = await res.json();
+    return data.log;
+  },
+
+  async deleteStorageLog(id: string): Promise<boolean> {
+    const res = await fetch(`/api/storage-logs/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Failed to delete storage log: ${res.status}`);
+    return true;
+  },
+
+  // Inter-Zone / Branch Stock Transfer
+  async transferItem(
+    id: string,
+    payload: TransferItemPayload
+  ): Promise<{ sourceItem: InventoryItem; transferredItem: InventoryItem | null }> {
+    const res = await fetch(`/api/items/${id}/transfer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`Failed to transfer item: ${res.status}`);
+    return await res.json();
+  },
+
+  // Physical Stocktake & Variance Reconciliation
+  async reconcileStocktake(entries: StocktakeEntryPayload[]): Promise<StocktakeResult> {
+    const res = await fetch('/api/stocktake', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries }),
+    });
+    if (!res.ok) throw new Error(`Failed to reconcile stocktake: ${res.status}`);
+    return await res.json();
+  },
+
+  // Daily Kitchen Checklists & Shift Handover
+  async fetchChecklists(): Promise<ChecklistItem[]> {
+    const res = await fetch('/api/checklists');
+    if (!res.ok) throw new Error(`Failed to fetch checklists: ${res.status}`);
+    const data = await res.json();
+    return data.checklists || [];
+  },
+
+  async saveChecklistItem(entry: Partial<ChecklistItem>): Promise<ChecklistItem> {
+    const res = await fetch('/api/checklists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+    if (!res.ok) throw new Error(`Failed to save checklist item: ${res.status}`);
+    const data = await res.json();
+    return data.item;
+  },
+
+  async toggleChecklistItem(id: string): Promise<ChecklistItem> {
+    const res = await fetch(`/api/checklists/${id}/toggle`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Failed to toggle checklist item: ${res.status}`);
+    const data = await res.json();
+    return data.item;
+  },
+
+  async deleteChecklistItem(id: string): Promise<boolean> {
+    const res = await fetch(`/api/checklists/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Failed to delete checklist item: ${res.status}`);
+    return true;
+  },
+
+  async resetDailyChecklists(): Promise<ChecklistItem[]> {
+    const res = await fetch('/api/checklists/reset', { method: 'POST' });
+    if (!res.ok) throw new Error(`Failed to reset daily checklists: ${res.status}`);
+    const data = await res.json();
+    return data.checklists || [];
+  },
+};

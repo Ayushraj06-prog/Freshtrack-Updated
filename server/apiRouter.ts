@@ -456,5 +456,128 @@ apiRouter.post('/restore', (req, res) => {
   }
 });
 
+// 12. Suppliers & Vendors Directory
+apiRouter.get('/suppliers', (req, res) => {
+  try {
+    const suppliers = db.getSuppliers();
+    res.json({ success: true, count: suppliers.length, suppliers });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
+apiRouter.post('/suppliers', (req, res) => {
+  try {
+    const supplier = db.saveSupplier(req.body);
+    res.status(201).json({ success: true, supplier });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
 
+apiRouter.delete('/suppliers/:id', (req, res) => {
+  try {
+    db.deleteSupplier(req.params.id);
+    res.json({ success: true, deletedId: req.params.id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 13. Cold-Chain & FSSAI Storage Temperature / Hygiene Logs
+apiRouter.get('/storage-logs', (req, res) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : 60;
+    const logs = db.getStorageLogs(limit);
+    res.json({ success: true, count: logs.length, logs });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/storage-logs', (req, res) => {
+  try {
+    const log = db.addStorageLog(req.body);
+    res.status(201).json({ success: true, log });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/storage-logs/:id', (req, res) => {
+  try {
+    db.deleteStorageLog(req.params.id);
+    res.json({ success: true, deletedId: req.params.id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 14. Inter-Zone / Branch Stock Transfer
+apiRouter.post('/items/:id/transfer', (req, res) => {
+  try {
+    const result = db.transferItem(req.params.id, req.body || {});
+    if (!result) return res.status(404).json({ success: false, error: 'Item not found' });
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// 15. Physical Stocktake & Variance Reconciliation
+apiRouter.post('/stocktake', (req, res) => {
+  try {
+    const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+    const result = db.reconcileStocktake(entries);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// 16. Daily Kitchen Checklists & Shift Handover Notes
+apiRouter.get('/checklists', (req, res) => {
+  try {
+    const checklists = db.getChecklists();
+    res.json({ success: true, count: checklists.length, checklists });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/checklists', (req, res) => {
+  try {
+    const item = db.saveChecklistItem(req.body);
+    res.status(201).json({ success: true, item });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/checklists/reset', (req, res) => {
+  try {
+    const checklists = db.resetDailyChecklists();
+    res.json({ success: true, checklists });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/checklists/:id/toggle', (req, res) => {
+  try {
+    const item = db.toggleChecklistItem(req.params.id);
+    if (!item) return res.status(404).json({ success: false, error: 'Checklist item not found' });
+    res.json({ success: true, item });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/checklists/:id', (req, res) => {
+  try {
+    db.deleteChecklistItem(req.params.id);
+    res.json({ success: true, deletedId: req.params.id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});

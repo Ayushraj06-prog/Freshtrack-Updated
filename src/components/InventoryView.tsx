@@ -25,6 +25,9 @@ import {
   XCircle,
   CheckSquare,
   Square,
+  Printer,
+  ClipboardCheck,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays, SHELF_LIFE_DATABASE } from '../data/shelfLifeData';
@@ -32,12 +35,15 @@ import { InventoryItem, ItemCategory, StorageLocation } from '../types/inventory
 import { UseItemModal } from './UseItemModal';
 import { CustomRecipeModal } from './CustomRecipeModal';
 import { CompletedAndBuyPanel } from './CompletedAndBuyPanel';
+import { TransferStockModal } from './TransferStockModal';
 
 interface InventoryViewProps {
   onOpenAddModal: () => void;
   setActiveTab: (tab: string) => void;
   initialStatusFilter?: 'active' | 'urgent' | 'low-stock' | 'used' | 'restock' | 'all' | null;
   onClearStatusJump?: () => void;
+  onOpenLabelPrinter?: (ids?: string[]) => void;
+  onOpenStocktake?: () => void;
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({
@@ -45,6 +51,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
   setActiveTab,
   initialStatusFilter,
   onClearStatusJump,
+  onOpenLabelPrinter,
+  onOpenStocktake,
 }) => {
   const {
     items,
@@ -98,6 +106,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [usingItem, setUsingItem] = useState<InventoryItem | null>(null);
+  const [transferringItem, setTransferringItem] = useState<InventoryItem | null>(null);
   const [isCustomRecipeOpen, setIsCustomRecipeOpen] = useState(false);
   const [customRecipeItemId, setCustomRecipeItemId] = useState<string | null>(null);
 
@@ -299,9 +308,29 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
           <div className="flex items-center gap-2 ml-auto">
             {isEnterprise && (
-              <span className="px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 font-bold text-[11px]">
+              <span className="px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 font-bold text-[11px] tabular-nums">
                 At Risk (≤48h): ₹{(stats.valueAtRiskRs ?? 0).toLocaleString('en-IN')}
               </span>
+            )}
+            {onOpenStocktake && (
+              <button
+                type="button"
+                onClick={onOpenStocktake}
+                className="px-3 py-1.5 rounded-xl bg-white hover:bg-stone-50 text-stone-800 border border-[#E2E8DE] font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <ClipboardCheck className="w-3.5 h-3.5 text-[#2C5F2D]" />
+                <span>Stocktake Audit</span>
+              </button>
+            )}
+            {onOpenLabelPrinter && (
+              <button
+                type="button"
+                onClick={() => onOpenLabelPrinter()}
+                className="px-3 py-1.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white font-bold flex items-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5 text-[#A3E635]" />
+                <span>FIFO Labels</span>
+              </button>
             )}
             <button
               type="button"
@@ -370,9 +399,29 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           </button>
         ))}
 
-        {/* Multi-select toggle + Category Dropdown */}
+        {/* Multi-select toggle + Stocktake + Print Labels + Category Dropdown */}
         {selectedStatus !== 'restock' && (
           <div className="ml-auto flex items-center gap-2 shrink-0">
+            {!isCommercial && onOpenStocktake && (
+              <button
+                type="button"
+                onClick={onOpenStocktake}
+                className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-white border border-[#E2E8DE] text-stone-700 hover:bg-stone-50 flex items-center gap-1 cursor-pointer"
+              >
+                <ClipboardCheck className="w-3.5 h-3.5 text-[#2C5F2D]" />
+                <span>Stocktake</span>
+              </button>
+            )}
+            {!isCommercial && onOpenLabelPrinter && (
+              <button
+                type="button"
+                onClick={() => onOpenLabelPrinter()}
+                className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-white border border-[#E2E8DE] text-stone-700 hover:bg-stone-50 flex items-center gap-1 cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5 text-[#2C5F2D]" />
+                <span>Labels</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -490,6 +539,19 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 <ShoppingCart className="w-3.5 h-3.5" />
                 <span>+ Buy List</span>
               </button>
+
+              {onOpenLabelPrinter && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenLabelPrinter(selectedIds);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-stone-700 hover:bg-stone-600 text-white font-bold cursor-pointer flex items-center gap-1"
+                >
+                  <Printer className="w-3.5 h-3.5 text-[#A3E635]" />
+                  <span>Print Labels</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -714,6 +776,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
+
+                    {item.status === 'active' && (
+                      <button
+                        onClick={() => setTransferringItem(item)}
+                        className="p-1.5 text-stone-400 hover:text-[#2C5F2D] hover:bg-[#EAF3E6] rounded-lg transition-colors cursor-pointer"
+                        title="Transfer / Split Batch to another Storage or Zone"
+                      >
+                        <ArrowLeftRight className="w-3.5 h-3.5" />
+                      </button>
+                    )}
 
                     {confirmDeleteId === item.id ? (
                       <div className="flex items-center gap-1">
@@ -1033,6 +1105,18 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             setUsingItem(null);
             setCustomRecipeItemId(itemId);
             setIsCustomRecipeOpen(true);
+          }}
+        />
+      )}
+
+      {/* Transfer / Split Batch Modal */}
+      {transferringItem && (
+        <TransferStockModal
+          item={transferringItem}
+          onClose={() => setTransferringItem(null)}
+          onSuccess={(msg) => {
+            setQueuedNotice(msg);
+            setTimeout(() => setQueuedNotice(null), 4500);
           }}
         />
       )}

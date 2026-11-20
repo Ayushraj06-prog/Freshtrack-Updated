@@ -17,6 +17,12 @@ import {
   StockFromRestockPayload,
   MealPlanEntry,
   ActivityLogEntry,
+  Supplier,
+  StorageLog,
+  ChecklistItem,
+  TransferItemPayload,
+  StocktakeEntryPayload,
+  StocktakeResult,
 } from '../types/inventory';
 
 interface InventoryContextType {
@@ -24,6 +30,9 @@ interface InventoryContextType {
   customRecipes: CustomRecipe[];
   restockList: RestockItem[];
   mealPlans: MealPlanEntry[];
+  suppliers: Supplier[];
+  storageLogs: StorageLog[];
+  checklists: ChecklistItem[];
   activityLogs: ActivityLogEntry[];
   preferences: UserPreferences;
   dbInfo: DbInfo | null;
@@ -54,6 +63,16 @@ interface InventoryContextType {
   saveMealPlan: (entry: Partial<MealPlanEntry>) => Promise<MealPlanEntry>;
   deleteMealPlan: (id: string) => Promise<void>;
   clearMealPlans: () => Promise<void>;
+  saveSupplier: (entry: Partial<Supplier>) => Promise<Supplier>;
+  deleteSupplier: (id: string) => Promise<void>;
+  addStorageLog: (entry: Partial<StorageLog>) => Promise<StorageLog>;
+  deleteStorageLog: (id: string) => Promise<void>;
+  transferItem: (id: string, payload: TransferItemPayload) => Promise<void>;
+  reconcileStocktake: (entries: StocktakeEntryPayload[]) => Promise<StocktakeResult>;
+  saveChecklistItem: (entry: Partial<ChecklistItem>) => Promise<ChecklistItem>;
+  toggleChecklistItem: (id: string) => Promise<void>;
+  deleteChecklistItem: (id: string) => Promise<void>;
+  resetDailyChecklists: () => Promise<void>;
   refreshActivityLogs: () => Promise<void>;
   exportBackupJson: () => Promise<void>;
   restoreBackupJson: (snapshot: any) => Promise<void>;
@@ -85,6 +104,9 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [customRecipes, setCustomRecipes] = useState<CustomRecipe[]>([]);
   const [restockList, setRestockList] = useState<RestockItem[]>([]);
   const [mealPlans, setMealPlans] = useState<MealPlanEntry[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [storageLogs, setStorageLogs] = useState<StorageLog[]>([]);
+  const [checklists, setChecklists] = useState<ChecklistItem[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFS);
   const [dbInfo, setDbInfo] = useState<DbInfo | null>(null);
@@ -103,22 +125,38 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   // Load state from backend SQLite database on mount
   const refreshBackendData = async () => {
     try {
-      const [backendItems, backendPrefs, info, customRecs, backendRestock, backendMeals, backendLogs] =
-        await Promise.all([
-          api.fetchItems(),
-          api.fetchPreferences(),
-          api.getDbInfo(),
-          api.fetchCustomRecipes().catch(() => []),
-          api.fetchRestockList().catch(() => []),
-          api.fetchMealPlans().catch(() => []),
-          api.fetchActivityLogs(40).catch(() => []),
-        ]);
+      const [
+        backendItems,
+        backendPrefs,
+        info,
+        customRecs,
+        backendRestock,
+        backendMeals,
+        backendSuppliers,
+        backendStorageLogs,
+        backendChecklists,
+        backendLogs,
+      ] = await Promise.all([
+        api.fetchItems(),
+        api.fetchPreferences(),
+        api.getDbInfo(),
+        api.fetchCustomRecipes().catch(() => []),
+        api.fetchRestockList().catch(() => []),
+        api.fetchMealPlans().catch(() => []),
+        api.fetchSuppliers().catch(() => []),
+        api.fetchStorageLogs(60).catch(() => []),
+        api.fetchChecklists().catch(() => []),
+        api.fetchActivityLogs(40).catch(() => []),
+      ]);
       setItems(backendItems);
       if (backendPrefs) setPreferences(backendPrefs);
       setDbInfo(info);
       setCustomRecipes(customRecs || []);
       setRestockList(backendRestock || []);
       setMealPlans(backendMeals || []);
+      setSuppliers(backendSuppliers || []);
+      setStorageLogs(backendStorageLogs || []);
+      setChecklists(backendChecklists || []);
       setActivityLogs(backendLogs || []);
       setDbConnected(true);
     } catch (err) {
@@ -500,6 +538,102 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
+  const saveSupplier = async (entry: Partial<Supplier>): Promise<Supplier> => {
+    const saved = await api.saveSupplier(entry);
+    setSuppliers((prev) => {
+      const idx = prev.findIndex((s) => s.id === saved.id);
+      if (idx !== -1) return prev.map((s) => (s.id === saved.id ? saved : s));
+      return [...prev, saved].sort((a, b) => a.name.localeCompare(b.name));
+    });
+    refreshActivityLogs();
+    return saved;
+  };
+
+  const deleteSupplier = async (id: string) => {
+    setSuppliers((prev) => prev.filter((s) => s.id !== id));
+    try {
+      await api.deleteSupplier(id);
+    } catch (err) {
+      console.error('Failed to delete supplier:', err);
+    }
+  };
+
+  const addStorageLog = async (entry: Partial<StorageLog>): Promise<StorageLog> => {
+    const saved = await api.addStorageLog(entry);
+    setStorageLogs((prev) => [saved, ...prev]);
+    refreshActivityLogs();
+    return saved;
+  };
+
+  const deleteStorageLog = async (id: string) => {
+    setStorageLogs((prev) => prev.filter((l) => l.id !== id));
+    try {
+      await api.deleteStorageLog(id);
+    } catch (err) {
+      console.error('Failed to delete storage log:', err);
+    }
+  };
+
+  const transferItem = async (id: string, payload: TransferItemPayload) => {
+    const res = await api.transferItem(id, payload);
+    setItems((prev) => {
+      const updated = prev.map((i) => (i.id === id && res.sourceItem ? res.sourceItem : i));
+      return res.transferredItem ? [res.transferredItem, ...updated] : updated;
+    });
+    api.getDbInfo().then(setDbInfo).catch(() => {});
+    refreshActivityLogs();
+  };
+
+  const reconcileStocktake = async (entries: StocktakeEntryPayload[]): Promise<StocktakeResult> => {
+    const res = await api.reconcileStocktake(entries);
+    if (Array.isArray(res.items)) setItems(res.items);
+    if (Array.isArray(res.restockList)) setRestockList(res.restockList);
+    api.getDbInfo().then(setDbInfo).catch(() => {});
+    refreshActivityLogs();
+    return res;
+  };
+
+  const saveChecklistItem = async (entry: Partial<ChecklistItem>): Promise<ChecklistItem> => {
+    const saved = await api.saveChecklistItem(entry);
+    setChecklists((prev) => {
+      const idx = prev.findIndex((c) => c.id === saved.id);
+      if (idx !== -1) return prev.map((c) => (c.id === saved.id ? saved : c));
+      return [saved, ...prev];
+    });
+    return saved;
+  };
+
+  const toggleChecklistItem = async (id: string) => {
+    setChecklists((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? { ...c, completed: !c.completed, completedAt: !c.completed ? new Date().toISOString() : null }
+          : c
+      )
+    );
+    try {
+      const updated = await api.toggleChecklistItem(id);
+      setChecklists((prev) => prev.map((c) => (c.id === id ? updated : c)));
+    } catch (err) {
+      console.error('Failed to toggle checklist:', err);
+    }
+  };
+
+  const deleteChecklistItem = async (id: string) => {
+    setChecklists((prev) => prev.filter((c) => c.id !== id));
+    try {
+      await api.deleteChecklistItem(id);
+    } catch (err) {
+      console.error('Failed to delete checklist item:', err);
+    }
+  };
+
+  const resetDailyChecklists = async () => {
+    const updated = await api.resetDailyChecklists();
+    setChecklists(updated);
+    refreshActivityLogs();
+  };
+
   const exportBackupJson = async () => {
     const snapshot = await api.exportBackup();
     const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
@@ -700,6 +834,9 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         customRecipes,
         restockList,
         mealPlans,
+        suppliers,
+        storageLogs,
+        checklists,
         activityLogs,
         preferences,
         dbInfo,
@@ -727,6 +864,16 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         saveMealPlan,
         deleteMealPlan,
         clearMealPlans,
+        saveSupplier,
+        deleteSupplier,
+        addStorageLog,
+        deleteStorageLog,
+        transferItem,
+        reconcileStocktake,
+        saveChecklistItem,
+        toggleChecklistItem,
+        deleteChecklistItem,
+        resetDailyChecklists,
         refreshActivityLogs,
         exportBackupJson,
         restoreBackupJson,

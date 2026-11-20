@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   LayoutDashboard,
   Refrigerator,
@@ -14,29 +14,57 @@ import {
   Building2,
   SlidersHorizontal,
   X,
+  Truck,
 } from 'lucide-react';
 import { InventoryProvider, useInventory } from './context/InventoryContext';
 import { Header } from './components/Header';
 import { DashboardView } from './components/DashboardView';
 import { InventoryView } from './components/InventoryView';
 import { RecipesView } from './components/RecipesView';
+import { OperationsView } from './components/OperationsView';
 import { SettingsView } from './components/SettingsView';
 import { AddItemsModal } from './components/AddItemsModal';
 import { MorningDigestModal } from './components/MorningDigestModal';
 import { ScaleSelectorModal } from './components/ScaleSelectorModal';
+import { CommandPaletteModal } from './components/CommandPaletteModal';
+import { FifoLabelPrinterModal } from './components/FifoLabelPrinterModal';
+import { StocktakeModal } from './components/StocktakeModal';
+import { OfflineIndicator } from './components/PWAInstallButton';
 import { OperationScale } from './types/inventory';
 
 function MainApp() {
-  const { preferences, updatePreferences, dbConnected } = useInventory();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'recipes' | 'settings'>('inventory');
+  const { items, preferences, updatePreferences, dbConnected } = useInventory();
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'recipes' | 'operations' | 'settings'>('inventory');
   const [inventoryStatusJump, setInventoryStatusJump] = useState<'active' | 'urgent' | 'low-stock' | 'used' | 'restock' | 'all' | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isDigestOpen, setIsDigestOpen] = useState(false);
   const [isScaleModalOpen, setIsScaleModalOpen] = useState(false);
+  const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [isLabelPrinterOpen, setIsLabelPrinterOpen] = useState(false);
+  const [isStocktakeOpen, setIsStocktakeOpen] = useState(false);
+  const [labelPrinterInitialIds, setLabelPrinterInitialIds] = useState<string[] | undefined>(undefined);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandOpen((prev) => !prev);
+      } else if (e.key === 'Escape') {
+        setIsCommandOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const openRestockPanel = () => {
     setInventoryStatusJump('restock');
     setActiveTab('inventory');
+  };
+
+  const openLabelPrinter = (ids?: string[]) => {
+    setLabelPrinterInitialIds(ids && ids.length > 0 ? ids : undefined);
+    setIsLabelPrinterOpen(true);
   };
 
   const handleQuickScaleSelect = async (scale: OperationScale) => {
@@ -59,6 +87,7 @@ function MainApp() {
         onOpenMorningDigest={() => setIsDigestOpen(true)}
         onOpenAddModal={() => setIsAddModalOpen(true)}
         onOpenScaleModal={() => setIsScaleModalOpen(true)}
+        onOpenCommandPalette={() => setIsCommandOpen(true)}
       />
 
       {/* Main Tab Navigation for Desktop */}
@@ -112,6 +141,22 @@ function MainApp() {
                 {preferences.operationScale === 'household'
                   ? 'Rasoi Zero-Waste Recipes'
                   : 'Prep & Batch Recipes'}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('operations')}
+              className={`px-4 py-2 rounded-xl flex items-center gap-2 transition-all cursor-pointer ${
+                activeTab === 'operations'
+                  ? 'bg-[#2C5F2D] text-white shadow-xs'
+                  : 'text-stone-600 hover:bg-white hover:text-stone-900'
+              }`}
+            >
+              <Truck className="w-4 h-4" />
+              <span>
+                {preferences.operationScale === 'household'
+                  ? 'Cold-Chain & Shelf Guide'
+                  : 'Vendors, Temp & Ops'}
               </span>
             </button>
 
@@ -219,6 +264,8 @@ function MainApp() {
             setActiveTab={(t) => setActiveTab(t as any)}
             initialStatusFilter={inventoryStatusJump}
             onClearStatusJump={() => setInventoryStatusJump(null)}
+            onOpenLabelPrinter={openLabelPrinter}
+            onOpenStocktake={() => setIsStocktakeOpen(true)}
           />
         )}
         {activeTab === 'dashboard' && (
@@ -230,6 +277,7 @@ function MainApp() {
           />
         )}
         {activeTab === 'recipes' && <RecipesView />}
+        {activeTab === 'operations' && <OperationsView onOpenStocktake={() => setIsStocktakeOpen(true)} />}
         {activeTab === 'settings' && <SettingsView onOpenScaleModal={() => setIsScaleModalOpen(true)} />}
       </main>
 
@@ -269,6 +317,14 @@ function MainApp() {
         </button>
 
         <button
+          onClick={() => setActiveTab('operations')}
+          className={`flex flex-col items-center gap-1 ${activeTab === 'operations' ? 'text-[#2C5F2D]' : ''}`}
+        >
+          <Truck className="w-5 h-5" />
+          <span>Ops</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('settings')}
           className={`flex flex-col items-center gap-1 ${activeTab === 'settings' ? 'text-[#2C5F2D]' : ''}`}
         >
@@ -293,6 +349,32 @@ function MainApp() {
         isOpen={isScaleModalOpen}
         onClose={() => setIsScaleModalOpen(false)}
       />
+
+      <CommandPaletteModal
+        isOpen={isCommandOpen}
+        onClose={() => setIsCommandOpen(false)}
+        setActiveTab={(t) => setActiveTab(t as any)}
+        onOpenAddModal={() => setIsAddModalOpen(true)}
+        onOpenScaleModal={() => setIsScaleModalOpen(true)}
+        onOpenRestockList={openRestockPanel}
+        onOpenLabelPrinter={() => openLabelPrinter()}
+        onOpenStocktake={() => setIsStocktakeOpen(true)}
+      />
+
+      <FifoLabelPrinterModal
+        isOpen={isLabelPrinterOpen}
+        onClose={() => setIsLabelPrinterOpen(false)}
+        items={items}
+        initialSelectedIds={labelPrinterInitialIds}
+        organizationName={preferences.organizationName}
+      />
+
+      <StocktakeModal
+        isOpen={isStocktakeOpen}
+        onClose={() => setIsStocktakeOpen(false)}
+      />
+
+      <OfflineIndicator />
     </div>
   );
 }

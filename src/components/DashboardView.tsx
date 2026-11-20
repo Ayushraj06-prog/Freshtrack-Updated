@@ -21,6 +21,8 @@ import {
   RefreshCw,
   ShoppingCart,
   History,
+  Leaf,
+  Droplets,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays } from '../data/shelfLifeData';
@@ -81,6 +83,76 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const wasteBudget = preferences.wasteBudgetRs || (isEnterprise ? 50000 : isCommercial ? 15000 : 1500);
   const wastePercent = wasteBudget > 0 ? Math.min(100, Math.round((stats.moneyWastedRs / wasteBudget) * 100)) : 0;
+
+  // Expiry Horizon Breakdown for Active Stock
+  const activeItems = items.filter((i) => i.status === 'active');
+  const horizonBuckets = activeItems.reduce(
+    (acc, item) => {
+      const rem = getRemainingDays(item.estimatedExpiryDate);
+      if (rem <= 0) acc.overdueToday += 1;
+      else if (rem <= 2) acc.urgent1to2 += 1;
+      else if (rem <= 7) acc.soon3to7 += 1;
+      else acc.safeOver7 += 1;
+      return acc;
+    },
+    { overdueToday: 0, urgent1to2: 0, soon3to7: 0, safeOver7: 0 }
+  );
+  const totalHorizon = Math.max(1, activeItems.length);
+
+  // Sustainability & ESG Impact from consumed (used) & partially saved items
+  const estimateItemWeightKg = (item: InventoryItem): number => {
+    const qty = Number(item.originalQuantity || item.quantity || 1);
+    const u = (item.unit || '').toLowerCase();
+    if (u.includes('kg') || u === 'l' || u.includes('litre') || u.includes('liter')) return qty;
+    if (u === 'g' || u === 'gm' || u === 'gms' || u === 'ml') return qty / 1000;
+    if (u.includes('dozen')) return qty * 0.65;
+    if (u.includes('bunch')) return qty * 0.2;
+    return qty * 0.35; // standard pack/piece weight estimate
+  };
+
+  const rescuedFoodKg = items.reduce((sum, item) => {
+    if (item.status === 'used') {
+      return sum + estimateItemWeightKg(item);
+    }
+    if (item.status === 'active' && item.originalQuantity && item.originalQuantity > item.quantity) {
+      const ratioUsed = (item.originalQuantity - item.quantity) / item.originalQuantity;
+      return sum + estimateItemWeightKg(item) * ratioUsed;
+    }
+    return sum;
+  }, 0);
+
+  const co2PreventedKg = Number((rescuedFoodKg * 2.5).toFixed(1));
+  const waterSavedLiters = Math.round(rescuedFoodKg * 1000);
+  const mealsRescued = Math.round(rescuedFoodKg / 0.45);
+
+  // Category Valuation vs At-Risk / Spoiled Breakdown
+  const categoryValuation = Object.values(
+    items.reduce((acc, item) => {
+      const cat = item.category || 'Other';
+      if (!acc[cat]) {
+        acc[cat] = { category: cat, activeRs: 0, riskOrSpoiledRs: 0, count: 0 };
+      }
+      const val = Number(item.price || 0);
+      if (item.status === 'active') {
+        acc[cat].activeRs += val;
+        acc[cat].count += 1;
+        if (getRemainingDays(item.estimatedExpiryDate) <= 2) {
+          acc[cat].riskOrSpoiledRs += val;
+        }
+      } else if (item.status === 'expired') {
+        acc[cat].riskOrSpoiledRs += val;
+      }
+      return acc;
+    }, {} as Record<string, { category: string; activeRs: number; riskOrSpoiledRs: number; count: number }>)
+  )
+    .filter((c) => c.activeRs > 0 || c.riskOrSpoiledRs > 0)
+    .sort((a, b) => b.activeRs + b.riskOrSpoiledRs - (a.activeRs + a.riskOrSpoiledRs))
+    .slice(0, 6);
+
+  const maxCategoryValue = Math.max(
+    1,
+    ...categoryValuation.map((c) => Math.max(c.activeRs, c.riskOrSpoiledRs))
+  );
 
   return (
     <div className="space-y-6 pb-24">
@@ -224,6 +296,140 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
             <div className="text-[10px] text-white/70 mt-0.5">
               {stats.activeCount} active SKUs &bull; {stats.freshCount} fresh
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Visual Expiry Horizon & Sustainability / ESG Impact Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Expiry Horizon Stacked Bar */}
+        <div className="bg-white border border-[#E2E8DE] rounded-3xl p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h3 className="font-extrabold text-sm text-stone-900">Expiry Horizon Distribution</h3>
+              <p className="text-[11px] text-stone-500">
+                Active stock urgency timeline across {activeItems.length} tracked item{activeItems.length === 1 ? '' : 's'}
+              </p>
+            </div>
+            <button
+              onClick={() => setActiveTab('inventory')}
+              className="text-xs font-bold text-[#2C5F2D] hover:underline cursor-pointer shrink-0"
+            >
+              Inspect FIFO &rarr;
+            </button>
+          </div>
+
+          {activeItems.length > 0 ? (
+            <>
+              <div className="h-3.5 w-full rounded-full overflow-hidden flex bg-stone-100">
+                {horizonBuckets.overdueToday > 0 && (
+                  <div
+                    className="bg-rose-500 h-full transition-all"
+                    style={{ width: `${(horizonBuckets.overdueToday / totalHorizon) * 100}%` }}
+                    title={`Overdue / Today: ${horizonBuckets.overdueToday}`}
+                  />
+                )}
+                {horizonBuckets.urgent1to2 > 0 && (
+                  <div
+                    className="bg-amber-500 h-full transition-all"
+                    style={{ width: `${(horizonBuckets.urgent1to2 / totalHorizon) * 100}%` }}
+                    title={`1–2 Days Left: ${horizonBuckets.urgent1to2}`}
+                  />
+                )}
+                {horizonBuckets.soon3to7 > 0 && (
+                  <div
+                    className="bg-lime-500 h-full transition-all"
+                    style={{ width: `${(horizonBuckets.soon3to7 / totalHorizon) * 100}%` }}
+                    title={`3–7 Days Left: ${horizonBuckets.soon3to7}`}
+                  />
+                )}
+                {horizonBuckets.safeOver7 > 0 && (
+                  <div
+                    className="bg-[#2C5F2D] h-full transition-all"
+                    style={{ width: `${(horizonBuckets.safeOver7 / totalHorizon) * 100}%` }}
+                    title={`Safe (>7 Days): ${horizonBuckets.safeOver7}`}
+                  />
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                {[
+                  { label: 'Today / Overdue', count: horizonBuckets.overdueToday, dot: 'bg-rose-500' },
+                  { label: '1–2 Days', count: horizonBuckets.urgent1to2, dot: 'bg-amber-500' },
+                  { label: '3–7 Days', count: horizonBuckets.soon3to7, dot: 'bg-lime-500' },
+                  { label: 'Safe (>7d)', count: horizonBuckets.safeOver7, dot: 'bg-[#2C5F2D]' },
+                ].map((b) => (
+                  <button
+                    key={b.label}
+                    type="button"
+                    onClick={() => setActiveTab('inventory')}
+                    className="p-2.5 rounded-2xl bg-[#F7F8F4] hover:bg-[#EAF3E6] border border-[#E2E8DE] text-left transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-1.5 text-[10px] font-semibold text-stone-500">
+                      <span className={`w-2 h-2 rounded-full ${b.dot}`} />
+                      <span className="truncate">{b.label}</span>
+                    </div>
+                    <div className="text-base font-black text-stone-900 mt-0.5 tabular-nums">{b.count}</div>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-stone-500 py-4 text-center">
+              Add active inventory items to view your live expiry horizon.
+            </p>
+          )}
+        </div>
+
+        {/* Sustainability & ESG Impact Card */}
+        <div className="bg-white border border-[#E2E8DE] rounded-3xl p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <Leaf className="w-4 h-4 text-[#2C5F2D]" />
+                <h3 className="font-extrabold text-sm text-stone-900">
+                  {isCommercial ? 'Sustainability & ESG Impact' : 'Zero-Waste Environmental Impact'}
+                </h3>
+              </div>
+              <p className="text-[11px] text-stone-500 mt-0.5">
+                Calculated from {rescuedFoodKg.toFixed(1)} kg of rescued &amp; cooked kitchen food
+              </p>
+            </div>
+            <span className="text-xs font-extrabold text-[#2C5F2D] tabular-nums">
+              {stats.savingPercentage}% Saved
+            </span>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2.5">
+            <div className="p-3 rounded-2xl bg-[#F7F8F4] border border-[#E2E8DE]">
+              <span className="text-[10px] font-semibold text-stone-500 block">CO₂e Prevented</span>
+              <span className="text-lg font-black text-[#2C5F2D] mt-0.5 block tabular-nums">
+                {co2PreventedKg} <span className="text-xs font-bold text-stone-500">kg</span>
+              </span>
+              <span className="text-[10px] text-stone-400">2.5 kg / kg food</span>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-[#F7F8F4] border border-[#E2E8DE]">
+              <span className="text-[10px] font-semibold text-stone-500 flex items-center gap-1">
+                <Droplets className="w-3 h-3 text-sky-600" />
+                <span>Water Saved</span>
+              </span>
+              <span className="text-lg font-black text-sky-800 mt-0.5 block tabular-nums">
+                {waterSavedLiters >= 1000
+                  ? `${(waterSavedLiters / 1000).toFixed(1)}k`
+                  : waterSavedLiters}{' '}
+                <span className="text-xs font-bold text-stone-500">L</span>
+              </span>
+              <span className="text-[10px] text-stone-400">Agri-water footprint</span>
+            </div>
+
+            <div className="p-3 rounded-2xl bg-[#F7F8F4] border border-[#E2E8DE]">
+              <span className="text-[10px] font-semibold text-stone-500 block">Meals Rescued</span>
+              <span className="text-lg font-black text-stone-900 mt-0.5 block tabular-nums">
+                {mealsRescued}
+              </span>
+              <span className="text-[10px] text-stone-400">~450g per meal</span>
             </div>
           </div>
         </div>
@@ -485,13 +691,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </a>
       </div>
 
-      {/* Category Breakdown */}
+      {/* Category Valuation vs Waste Risk & Staples Breakdown */}
       <div className="bg-white border border-[#E2E8DE] rounded-3xl p-5 shadow-xs space-y-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-[#2C5F2D]" />
             <h3 className="font-extrabold text-sm text-stone-900">
-              {isCommercial ? 'Inventory Category Breakdown' : 'Kitchen Staples Breakdown'}
+              {isCommercial ? 'Category Stock Value vs Waste Risk (₹)' : 'Kitchen Staples & Value Breakdown'}
             </h3>
           </div>
           <button
@@ -502,6 +708,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </button>
         </div>
 
+        {categoryValuation.length > 0 && (
+          <div className="space-y-2.5 pb-3 border-b border-stone-100">
+            {categoryValuation.map((row) => (
+              <div key={row.category} className="space-y-1 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-stone-800">
+                    {row.category}{' '}
+                    <span className="text-[11px] font-normal text-stone-400">({row.count} active)</span>
+                  </span>
+                  <div className="flex items-center gap-2 tabular-nums text-[11px]">
+                    <span className="font-bold text-[#2C5F2D]">
+                      ₹{row.activeRs.toLocaleString('en-IN')} active
+                    </span>
+                    {row.riskOrSpoiledRs > 0 && (
+                      <span className="font-bold text-rose-700">
+                        · ₹{row.riskOrSpoiledRs.toLocaleString('en-IN')} risk/lost
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="h-2 w-full bg-stone-100 rounded-full overflow-hidden flex gap-0.5">
+                  <div
+                    className="h-full bg-[#2C5F2D] rounded-full transition-all"
+                    style={{ width: `${Math.min(100, (row.activeRs / maxCategoryValue) * 100)}%` }}
+                  />
+                  {row.riskOrSpoiledRs > 0 && (
+                    <div
+                      className="h-full bg-rose-500 rounded-full transition-all"
+                      style={{
+                        width: `${Math.min(100, (row.riskOrSpoiledRs / maxCategoryValue) * 100)}%`,
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
           {Object.entries(categoryCounts).map(([cat, count]) => (
             <div
@@ -510,7 +755,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               className="p-3 bg-stone-50 hover:bg-[#EAF3E6] border border-stone-200 hover:border-[#6B9B4F] rounded-2xl transition-all cursor-pointer"
             >
               <span className="text-xs font-bold text-stone-800 block truncate">{cat}</span>
-              <span className="text-[11px] text-stone-500 mt-0.5 block">{count} item{count > 1 ? 's' : ''}</span>
+              <span className="text-[11px] text-stone-500 mt-0.5 block tabular-nums">
+                {count} item{count > 1 ? 's' : ''}
+              </span>
             </div>
           ))}
         </div>

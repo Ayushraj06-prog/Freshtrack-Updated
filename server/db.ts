@@ -140,7 +140,68 @@ sqliteDb.exec(`
     createdAt TEXT,
     updatedAt TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS suppliers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    contactName TEXT,
+    phone TEXT,
+    whatsapp TEXT,
+    email TEXT,
+    categories TEXT,
+    leadTimeDays INTEGER DEFAULT 1,
+    paymentTerms TEXT,
+    notes TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS storage_logs (
+    id TEXT PRIMARY KEY,
+    zoneName TEXT NOT NULL,
+    zoneType TEXT NOT NULL,
+    temperatureC REAL NOT NULL,
+    humidityPct REAL,
+    status TEXT NOT NULL,
+    checkedBy TEXT,
+    branchZone TEXT,
+    notes TEXT,
+    loggedAt TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS checklists (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    completed INTEGER DEFAULT 0,
+    completedAt TEXT,
+    assignedTo TEXT,
+    notes TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  );
 `);
+
+// Seed default daily kitchen checks if checklists table is empty
+try {
+  const chkCount = (sqliteDb.prepare('SELECT COUNT(*) as count FROM checklists').get() as { count: number }).count;
+  if (chkCount === 0) {
+    const now = new Date().toISOString();
+    const defaults = [
+      { id: 'chk-1', title: 'Inspect FIFO #1 urgent items expiring within 48 hours', category: 'opening', notes: 'Pull near-expiry stock to front shelf for today prep' },
+      { id: 'chk-2', title: 'Log Fridge (0–4°C) and Freezer (≤-18°C) temperatures', category: 'hygiene', notes: 'FSSAI cold-chain safety check' },
+      { id: 'chk-3', title: 'Check Par-Level shortages & send vendor / grocery buy list', category: 'opening', notes: 'Verify dairy, greens, and staple levels' },
+      { id: 'chk-4', title: 'Label & date all prepped containers and seal dry pantry jars', category: 'closing', notes: 'Print FIFO Use-By stickers before end of day' },
+    ];
+    const insertChk = sqliteDb.prepare(
+      `INSERT INTO checklists (id, title, category, completed, completedAt, assignedTo, notes, createdAt, updatedAt)
+       VALUES (@id, @title, @category, 0, NULL, NULL, @notes, @createdAt, @updatedAt)`
+    );
+    for (const d of defaults) {
+      insertChk.run({ ...d, createdAt: now, updatedAt: now });
+    }
+  }
+} catch {}
 
 // Safe migrations for existing preferences tables
 try { sqliteDb.exec("ALTER TABLE preferences ADD COLUMN operationScale TEXT DEFAULT 'household';"); } catch {}
@@ -1258,16 +1319,358 @@ export const db = {
     return true;
   },
 
+  // ---------------- Suppliers / Vendors Directory ----------------
+  getSuppliers() {
+    const rows = sqliteDb.prepare('SELECT * FROM suppliers ORDER BY name ASC').all() as any[];
+    return rows.map(mapSupplier);
+  },
+
+  saveSupplier(entry: any) {
+    const nowIso = new Date().toISOString();
+    const prepared = {
+      id: entry.id || `sup-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      name: String(entry.name || '').trim() || 'Supplier',
+      contactName: entry.contactName ?? null,
+      phone: entry.phone ?? null,
+      whatsapp: entry.whatsapp ?? null,
+      email: entry.email ?? null,
+      categories: entry.categories ?? null,
+      leadTimeDays: Number(entry.leadTimeDays) >= 0 ? Number(entry.leadTimeDays) : 1,
+      paymentTerms: entry.paymentTerms ?? null,
+      notes: entry.notes ?? null,
+      createdAt: entry.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    sqliteDb
+      .prepare(
+        `
+      INSERT OR REPLACE INTO suppliers (
+        id, name, contactName, phone, whatsapp, email, categories, leadTimeDays, paymentTerms, notes, createdAt, updatedAt
+      ) VALUES (
+        @id, @name, @contactName, @phone, @whatsapp, @email, @categories, @leadTimeDays, @paymentTerms, @notes, @createdAt, @updatedAt
+      )
+    `
+      )
+      .run(prepared);
+
+    this.logActivity('supplier', prepared.name, `Saved vendor profile (${prepared.leadTimeDays}d lead time)`);
+    return mapSupplier(prepared);
+  },
+
+  deleteSupplier(id: string) {
+    sqliteDb.prepare('DELETE FROM suppliers WHERE id = ?').run(id);
+    return true;
+  },
+
+  // ---------------- Cold-Chain & FSSAI Storage Temp Logs ----------------
+  getStorageLogs(limit = 60) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 60, 1), 300);
+    const rows = sqliteDb
+      .prepare('SELECT * FROM storage_logs ORDER BY loggedAt DESC LIMIT ?')
+      .all(safeLimit) as any[];
+    return rows.map(mapStorageLog);
+  },
+
+  addStorageLog(entry: any) {
+    const temp = Number(entry.temperatureC);
+    if (isNaN(temp)) {
+      throw new Error('Valid temperatureC number is required');
+    }
+    const zoneType = entry.zoneType || 'fridge';
+    const status = evaluateStorageTempStatus(zoneType, temp);
+    const prepared = {
+      id: entry.id || `temp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      zoneName: String(entry.zoneName || '').trim() || 'Main Storage',
+      zoneType,
+      temperatureC: temp,
+      humidityPct:
+        entry.humidityPct !== null && entry.humidityPct !== undefined && !isNaN(Number(entry.humidityPct))
+          ? Number(entry.humidityPct)
+          : null,
+      status,
+      checkedBy: entry.checkedBy ?? null,
+      branchZone: entry.branchZone ?? null,
+      notes: entry.notes ?? null,
+      loggedAt: entry.loggedAt || new Date().toISOString(),
+    };
+
+    sqliteDb
+      .prepare(
+        `
+      INSERT OR REPLACE INTO storage_logs (
+        id, zoneName, zoneType, temperatureC, humidityPct, status, checkedBy, branchZone, notes, loggedAt
+      ) VALUES (
+        @id, @zoneName, @zoneType, @temperatureC, @humidityPct, @status, @checkedBy, @branchZone, @notes, @loggedAt
+      )
+    `
+      )
+      .run(prepared);
+
+    this.logActivity(
+      status === 'pass' ? 'hygiene' : 'alert',
+      prepared.zoneName,
+      `Logged ${temp}°C (${status.toUpperCase()})`
+    );
+    return mapStorageLog(prepared);
+  },
+
+  deleteStorageLog(id: string) {
+    sqliteDb.prepare('DELETE FROM storage_logs WHERE id = ?').run(id);
+    return true;
+  },
+
+  // ---------------- Inter-Zone / Branch Stock Transfer ----------------
+  transferItem(
+    id: string,
+    payload: { quantity?: number; targetStorage?: string; targetBranchZone?: string | null; notes?: string | null }
+  ) {
+    const existing = this.getItemById(id);
+    if (!existing) return null;
+
+    const currQty = Number(existing.quantity) || 0;
+    const transferQty =
+      payload.quantity !== undefined && Number(payload.quantity) > 0
+        ? Math.min(currQty, Number(payload.quantity))
+        : currQty;
+    const targetStorage = payload.targetStorage || existing.storage;
+    const targetZone =
+      payload.targetBranchZone !== undefined && String(payload.targetBranchZone).trim() !== ''
+        ? String(payload.targetBranchZone).trim()
+        : existing.branchZone ?? null;
+    const transferNote = payload.notes ? String(payload.notes).trim() : '';
+
+    const sourceLabel = `${existing.branchZone || 'Main Kitchen'} (${existing.storage})`;
+    const destLabel = `${targetZone || 'Main Kitchen'} (${targetStorage})`;
+
+    // Full transfer -> update item in place
+    if (transferQty >= currQty || currQty <= 0) {
+      const updatedNotes = [existing.notes, `Transferred ${sourceLabel} → ${destLabel}${transferNote ? `: ${transferNote}` : ''}`]
+        .filter(Boolean)
+        .join(' • ');
+      const updated = this.updateItem(id, {
+        storage: targetStorage,
+        branchZone: targetZone,
+        notes: updatedNotes,
+      });
+      this.logActivity('transfer', existing.name, `Moved ${currQty} ${existing.unit} from ${sourceLabel} to ${destLabel}`);
+      return { sourceItem: updated, transferredItem: null };
+    }
+
+    // Partial transfer -> split batch cleanly
+    const remainingQty = Number((currQty - transferQty).toFixed(2));
+    const ratio = currQty > 0 ? transferQty / currQty : 0;
+    const transferPrice = existing.price !== null ? Math.round(existing.price * ratio) : null;
+    const remainPrice = existing.price !== null ? Math.max(0, existing.price - (transferPrice || 0)) : null;
+
+    const updatedSource = this.updateItem(id, {
+      quantity: remainingQty,
+      price: remainPrice,
+      notes: [existing.notes, `Split ${transferQty} ${existing.unit} → ${destLabel}`].filter(Boolean).join(' • '),
+    });
+
+    const createdTarget = this.insertItem({
+      name: existing.name,
+      category: existing.category,
+      quantity: transferQty,
+      originalQuantity: transferQty,
+      unit: existing.unit,
+      purchaseDate: existing.purchaseDate,
+      estimatedExpiryDate: existing.estimatedExpiryDate,
+      printedExpiryDate: existing.printedExpiryDate ?? null,
+      storage: targetStorage,
+      price: transferPrice,
+      status: 'active',
+      source: existing.source,
+      barcode: existing.barcode ?? null,
+      imageUrl: existing.imageUrl ?? null,
+      batchCode: existing.batchCode ?? null,
+      supplierName: existing.supplierName ?? null,
+      parLevel: existing.parLevel ?? null,
+      branchZone: targetZone,
+      notes: `Transferred from ${sourceLabel}${transferNote ? ` — ${transferNote}` : ''}`,
+    });
+
+    this.logActivity('transfer', existing.name, `Transferred ${transferQty} ${existing.unit} from ${sourceLabel} to ${destLabel}`);
+    return { sourceItem: updatedSource, transferredItem: createdTarget };
+  },
+
+  // ---------------- Physical Stocktake & Variance Reconciliation ----------------
+  reconcileStocktake(
+    entries: {
+      itemId: string;
+      actualQuantity: number;
+      zeroDisposition?: 'used' | 'expired';
+      addShortageToBuyList?: boolean;
+    }[]
+  ) {
+    let adjustedCount = 0;
+    let shortageCount = 0;
+    let totalVarianceRs = 0;
+
+    const prefs = this.getPreferences();
+    const pendingNames = new Set(
+      this.getRestockList()
+        .filter((r) => r.status === 'pending')
+        .map((r) => r.name.toLowerCase())
+    );
+
+    for (const entry of entries) {
+      if (!entry || !entry.itemId) continue;
+      const item = this.getItemById(entry.itemId);
+      if (!item || item.status !== 'active') continue;
+
+      const expected = Number(item.quantity) || 0;
+      const actual = Math.max(0, Number(entry.actualQuantity));
+      if (isNaN(actual) || Math.abs(actual - expected) < 0.001) continue;
+
+      adjustedCount += 1;
+      const diff = actual - expected; // negative = shortage / shrinkage
+      const baseQty = Number(item.originalQuantity || expected || 1);
+      const unitValue = item.price !== null && baseQty > 0 ? item.price / baseQty : 0;
+      const varianceRs = Math.round(diff * unitValue);
+      totalVarianceRs += varianceRs;
+
+      if (diff < 0) shortageCount += 1;
+
+      if (actual <= 0) {
+        if (entry.zeroDisposition === 'expired') {
+          this.markItemExpired(item.id);
+        } else {
+          this.markItemUsed(item.id, {
+            portion: 1,
+            usedPortionName: 'Stocktake Audit (0 on hand)',
+          });
+        }
+      } else {
+        const auditNote = `Stocktake ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}: ${expected} → ${actual} ${item.unit}`;
+        this.updateItem(item.id, {
+          quantity: Number(actual.toFixed(2)),
+          originalQuantity: Math.max(Number(item.originalQuantity || expected), actual),
+          notes: item.notes ? `${item.notes} • ${auditNote}` : auditNote,
+        });
+      }
+
+      const needsBuy =
+        entry.addShortageToBuyList &&
+        (actual <= 0 ||
+          (item.parLevel !== null && item.parLevel !== undefined && actual <= Number(item.parLevel)));
+
+      if (needsBuy && !pendingNames.has(item.name.toLowerCase())) {
+        this.saveRestockItem({
+          name: item.name,
+          category: item.category,
+          targetQuantity: Math.max(1, Number(item.originalQuantity || expected || 1)),
+          unit: item.unit,
+          storage: item.storage,
+          estimatedPrice: item.price ?? null,
+          supplierName: item.supplierName ?? null,
+          branchZone: item.branchZone ?? (prefs.branchLocation || null),
+          parLevel: item.parLevel ?? null,
+          sourceItemId: item.id,
+          reason: actual <= 0 ? 'completed' : 'low-stock',
+          priority: 'urgent',
+          checked: false,
+          status: 'pending',
+          notes: 'Queued automatically from Stocktake Audit',
+        });
+        pendingNames.add(item.name.toLowerCase());
+      }
+    }
+
+    if (adjustedCount > 0) {
+      const sign = totalVarianceRs >= 0 ? '+' : '-';
+      this.logActivity(
+        'stocktake',
+        'Physical Stocktake Audit',
+        `Reconciled ${adjustedCount} SKU(s) (${shortageCount} shortage, variance ${sign}₹${Math.abs(totalVarianceRs)})`
+      );
+    }
+
+    return {
+      adjustedCount,
+      shortageCount,
+      totalVarianceRs,
+      items: this.getAllItems(),
+      restockList: this.getRestockList(),
+    };
+  },
+
+  // ---------------- Daily Kitchen Checklists & Shift Handover ----------------
+  getChecklists() {
+    const rows = sqliteDb
+      .prepare('SELECT * FROM checklists ORDER BY completed ASC, createdAt DESC')
+      .all() as any[];
+    return rows.map(mapChecklistItem);
+  },
+
+  saveChecklistItem(entry: any) {
+    const nowIso = new Date().toISOString();
+    const prepared = {
+      id: entry.id || `chk-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      title: String(entry.title || '').trim() || 'Kitchen Task',
+      category: entry.category || 'opening',
+      completed: entry.completed ? 1 : 0,
+      completedAt: entry.completed ? (entry.completedAt || nowIso) : null,
+      assignedTo: entry.assignedTo ?? null,
+      notes: entry.notes ?? null,
+      createdAt: entry.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    sqliteDb
+      .prepare(
+        `
+      INSERT OR REPLACE INTO checklists (
+        id, title, category, completed, completedAt, assignedTo, notes, createdAt, updatedAt
+      ) VALUES (
+        @id, @title, @category, @completed, @completedAt, @assignedTo, @notes, @createdAt, @updatedAt
+      )
+    `
+      )
+      .run(prepared);
+
+    return mapChecklistItem(prepared);
+  },
+
+  toggleChecklistItem(id: string) {
+    const row = sqliteDb.prepare('SELECT * FROM checklists WHERE id = ?').get(id) as any;
+    if (!row) return null;
+    const nextCompleted = row.completed ? 0 : 1;
+    const nowIso = new Date().toISOString();
+    sqliteDb
+      .prepare('UPDATE checklists SET completed = ?, completedAt = ?, updatedAt = ? WHERE id = ?')
+      .run(nextCompleted, nextCompleted ? nowIso : null, nowIso, id);
+    return mapChecklistItem({ ...row, completed: nextCompleted, completedAt: nextCompleted ? nowIso : null, updatedAt: nowIso });
+  },
+
+  deleteChecklistItem(id: string) {
+    sqliteDb.prepare('DELETE FROM checklists WHERE id = ?').run(id);
+    return true;
+  },
+
+  resetDailyChecklists() {
+    const nowIso = new Date().toISOString();
+    sqliteDb
+      .prepare("UPDATE checklists SET completed = 0, completedAt = NULL, updatedAt = ? WHERE category != 'handover'")
+      .run(nowIso);
+    this.logActivity('hygiene', 'Daily Shift Checklist', 'Reset daily opening/closing checks for new shift');
+    return this.getChecklists();
+  },
+
   // ---------------- Full JSON Backup & Restore ----------------
   exportBackupJson() {
     return {
-      version: 1,
+      version: 3,
       exportedAt: new Date().toISOString(),
       preferences: this.getPreferences(),
       items: this.getAllItems(),
       customRecipes: this.getAllCustomRecipes(),
       restockList: this.getRestockList(),
       mealPlans: this.getMealPlans(),
+      suppliers: this.getSuppliers(),
+      storageLogs: this.getStorageLogs(150),
+      checklists: this.getChecklists(),
       activityLogs: this.getActivityLogs(100),
     };
   },
@@ -1299,6 +1702,24 @@ export const db = {
       sqliteDb.exec('DELETE FROM meal_plans;');
       for (const m of snapshot.mealPlans) {
         this.saveMealPlan(m);
+      }
+    }
+    if (Array.isArray(snapshot.suppliers)) {
+      sqliteDb.exec('DELETE FROM suppliers;');
+      for (const s of snapshot.suppliers) {
+        this.saveSupplier(s);
+      }
+    }
+    if (Array.isArray(snapshot.storageLogs)) {
+      sqliteDb.exec('DELETE FROM storage_logs;');
+      for (const l of snapshot.storageLogs) {
+        this.addStorageLog(l);
+      }
+    }
+    if (Array.isArray(snapshot.checklists)) {
+      sqliteDb.exec('DELETE FROM checklists;');
+      for (const c of snapshot.checklists) {
+        this.saveChecklistItem(c);
       }
     }
     this.logActivity('restocked', 'Full Database Restore', `Restored backup (${Array.isArray(snapshot.items) ? snapshot.items.length : 0} items)`);
@@ -1430,3 +1851,70 @@ function mapMealPlan(row: any) {
   };
 }
 
+function evaluateStorageTempStatus(zoneType: string, tempC: number): 'pass' | 'warning' | 'alert' {
+  if (zoneType === 'freezer') {
+    if (tempC <= -18) return 'pass';
+    if (tempC <= -14) return 'warning';
+    return 'alert';
+  }
+  if (zoneType === 'pantry') {
+    if (tempC >= 10 && tempC <= 25) return 'pass';
+    if (tempC >= 8 && tempC <= 30) return 'warning';
+    return 'alert';
+  }
+  if (zoneType === 'hot-hold') {
+    if (tempC >= 63) return 'pass';
+    if (tempC >= 57) return 'warning';
+    return 'alert';
+  }
+  // Default: fridge / walk-in cooler (FSSAI safe range 0°C – 4°C)
+  if (tempC >= 0 && tempC <= 4.5) return 'pass';
+  if (tempC >= -1 && tempC <= 7) return 'warning';
+  return 'alert';
+}
+
+function mapSupplier(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    contactName: row.contactName || undefined,
+    phone: row.phone || undefined,
+    whatsapp: row.whatsapp || undefined,
+    email: row.email || undefined,
+    categories: row.categories || undefined,
+    leadTimeDays: Number(row.leadTimeDays) || 1,
+    paymentTerms: row.paymentTerms || undefined,
+    notes: row.notes || undefined,
+    createdAt: row.createdAt || undefined,
+    updatedAt: row.updatedAt || undefined,
+  };
+}
+
+function mapStorageLog(row: any) {
+  return {
+    id: row.id,
+    zoneName: row.zoneName,
+    zoneType: row.zoneType || 'fridge',
+    temperatureC: Number(row.temperatureC),
+    humidityPct: row.humidityPct !== null && row.humidityPct !== undefined ? Number(row.humidityPct) : null,
+    status: row.status || 'pass',
+    checkedBy: row.checkedBy || undefined,
+    branchZone: row.branchZone || undefined,
+    notes: row.notes || undefined,
+    loggedAt: row.loggedAt,
+  };
+}
+
+function mapChecklistItem(row: any) {
+  return {
+    id: row.id,
+    title: row.title,
+    category: row.category || 'opening',
+    completed: Boolean(row.completed),
+    completedAt: row.completedAt || null,
+    assignedTo: row.assignedTo || undefined,
+    notes: row.notes || undefined,
+    createdAt: row.createdAt || undefined,
+    updatedAt: row.updatedAt || undefined,
+  };
+}

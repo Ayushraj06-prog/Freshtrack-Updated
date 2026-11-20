@@ -19,6 +19,7 @@ import {
   Plus,
   Trash2,
   CalendarDays,
+  IndianRupee,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays } from '../data/shelfLifeData';
@@ -52,7 +53,73 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
   const [isCustomModalOpen, setIsCustomModalOpen] = useState(false);
   const [recipeTab, setRecipeTab] = useState<'all' | 'expiring' | 'custom' | 'planner'>('all');
   const [batchMultiplier, setBatchMultiplier] = useState<number>(1);
+  const [menuPriceInput, setMenuPriceInput] = useState<string>('');
+  const [confirmDeleteCustomId, setConfirmDeleteCustomId] = useState<string | null>(null);
   const isCommercial = preferences.operationScale !== 'household';
+
+  // Estimate dish cost (₹) from matched inventory item prices
+  const selectedRecipeCosting = useMemo(() => {
+    if (!selectedRecipe) return null;
+    let baseBatchCost = 0;
+    let matchedPricedCount = 0;
+    const breakdown: { name: string; matchedItem?: string; estimatedRs: number; estimatedFromStock: boolean }[] = [];
+
+    for (const ing of selectedRecipe.allIngredients) {
+      const ingLower = ing.name.toLowerCase();
+      // Prefer active item with a price, fallback to any historical item with price
+      const match =
+        items.find(
+          (it) =>
+            it.status === 'active' &&
+            it.price !== null &&
+            it.price > 0 &&
+            (it.name.toLowerCase().includes(ingLower) || ingLower.includes(it.name.toLowerCase()))
+        ) ||
+        items.find(
+          (it) =>
+            it.price !== null &&
+            it.price > 0 &&
+            (it.name.toLowerCase().includes(ingLower) || ingLower.includes(it.name.toLowerCase()))
+        );
+
+      if (match && match.price) {
+        // Estimate portion used as ~35% of a typical retail pack for a standard recipe batch
+        const portionCost = Math.max(4, Math.round(match.price * 0.35));
+        baseBatchCost += portionCost;
+        matchedPricedCount += 1;
+        breakdown.push({
+          name: ing.name,
+          matchedItem: match.name,
+          estimatedRs: portionCost,
+          estimatedFromStock: true,
+        });
+      } else {
+        // Standard pantry staple/spice baseline estimate (₹8)
+        baseBatchCost += 8;
+        breakdown.push({
+          name: ing.name,
+          estimatedRs: 8,
+          estimatedFromStock: false,
+        });
+      }
+    }
+
+    const mult = isCommercial ? batchMultiplier : 1;
+    const totalBatchCost = Math.round(baseBatchCost * mult);
+    const totalServings = Math.max(1, (selectedRecipe.servings || 2) * mult);
+    const costPerServing = Math.round(totalBatchCost / totalServings);
+    const suggestedMenuPrice = Math.max(40, Math.ceil((costPerServing / 0.28) / 10) * 10);
+
+    return {
+      totalBatchCost,
+      totalServings,
+      costPerServing,
+      matchedPricedCount,
+      totalIngredients: selectedRecipe.allIngredients.length,
+      suggestedMenuPrice,
+      breakdown,
+    };
+  }, [selectedRecipe, items, batchMultiplier, isCommercial]);
 
   // Expiring items in the kitchen (within 3 days)
   const expiringActiveItems = useMemo(() => {
@@ -274,17 +341,16 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
     }, 5000);
   };
 
-  // Delete custom recipe handler
+  // Delete custom recipe handler (inline confirm, no browser dialogs)
   const handleDeleteCustom = async (id: string, title: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm(`Are you sure you want to delete custom recipe "${title}"?`)) {
-      try {
-        await deleteCustomRecipe(id);
-        setCookedSuccessMessage(`Deleted custom recipe "${title}".`);
-        setTimeout(() => setCookedSuccessMessage(null), 3000);
-      } catch (err: any) {
-        alert('Failed to delete recipe: ' + err?.message);
-      }
+    try {
+      await deleteCustomRecipe(id);
+      setConfirmDeleteCustomId(null);
+      setCookedSuccessMessage(`Deleted custom recipe "${title}".`);
+      setTimeout(() => setCookedSuccessMessage(null), 3000);
+    } catch (err: any) {
+      setCookedSuccessMessage(`Failed to delete recipe: ${err?.message || 'Unknown error'}`);
     }
   };
 
@@ -539,13 +605,40 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
 
                     {/* Delete button for custom recipes */}
                     {isCustom && (
-                      <button
-                        onClick={(e) => handleDeleteCustom(recipe.id, recipe.title, e)}
-                        className="absolute top-3 right-3 p-1.5 rounded-full bg-black/60 text-stone-200 hover:text-rose-400 hover:bg-black transition-colors cursor-pointer"
-                        title="Delete custom recipe"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      confirmDeleteCustomId === recipe.id ? (
+                        <div
+                          className="absolute top-3 right-3 flex items-center gap-1 bg-black/80 px-2 py-1 rounded-full"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <button
+                            onClick={(e) => handleDeleteCustom(recipe.id, recipe.title, e)}
+                            className="text-[10px] font-bold text-rose-300 hover:text-rose-200 cursor-pointer"
+                          >
+                            Delete
+                          </button>
+                          <span className="text-stone-500 text-[10px]">·</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDeleteCustomId(null);
+                            }}
+                            className="text-[10px] font-semibold text-stone-300 hover:text-white cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteCustomId(recipe.id);
+                          }}
+                          className="absolute top-3 right-3 p-1.5 rounded-full bg-black/60 text-stone-200 hover:text-rose-400 hover:bg-black transition-colors cursor-pointer"
+                          title="Delete custom recipe"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )
                     )}
 
                     <div className="absolute bottom-3 left-3 right-3 text-white">
@@ -600,11 +693,14 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
                 {/* Action buttons */}
                 <div className="p-4 pt-0 flex items-center gap-2">
                   <button
-                    onClick={() => setSelectedRecipe(recipe)}
+                    onClick={() => {
+                      setSelectedRecipe(recipe);
+                      setMenuPriceInput('');
+                    }}
                     className="flex-1 py-2 px-3 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <BookOpen className="w-3.5 h-3.5" />
-                    <span>View Recipe</span>
+                    <span>View &amp; Cost</span>
                   </button>
 
                   <button
@@ -702,7 +798,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
                     <span className="font-extrabold text-[#2C5F2D] block">
                       Commercial Prep Batch Multiplier
                     </span>
-                    <span className="text-[11px] text-stone-600">
+                    <span className="text-[11px] text-stone-600 tabular-nums">
                       Yields {selectedRecipe.servings * batchMultiplier} servings ({batchMultiplier}x batch)
                     </span>
                   </div>
@@ -712,7 +808,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
                         key={mult}
                         type="button"
                         onClick={() => setBatchMultiplier(mult)}
-                        className={`px-2.5 py-1 rounded-lg font-extrabold transition-all cursor-pointer ${
+                        className={`px-2.5 py-1 rounded-lg font-extrabold transition-all cursor-pointer tabular-nums ${
                           batchMultiplier === mult
                             ? 'bg-[#2C5F2D] text-white'
                             : 'text-stone-600 hover:bg-stone-100'
@@ -724,6 +820,88 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* Recipe Food Costing & Menu Margin Calculator */}
+              {selectedRecipeCosting && (() => {
+                const sellPrice =
+                  menuPriceInput !== '' && Number(menuPriceInput) > 0
+                    ? Number(menuPriceInput)
+                    : selectedRecipeCosting.suggestedMenuPrice;
+                const foodCostPct = sellPrice > 0 ? Math.round((selectedRecipeCosting.costPerServing / sellPrice) * 100) : 0;
+                const profitPerPlate = sellPrice - selectedRecipeCosting.costPerServing;
+                const batchProfit = profitPerPlate * selectedRecipeCosting.totalServings;
+                const marginTone =
+                  foodCostPct <= 30
+                    ? { label: 'Healthy ≤30%', cls: 'text-emerald-700' }
+                    : foodCostPct <= 38
+                    ? { label: 'Watch 31–38%', cls: 'text-amber-700' }
+                    : { label: 'High >38%', cls: 'text-rose-700' };
+
+                return (
+                  <div className="p-3.5 rounded-2xl bg-[#F7F8F4] border border-[#E2E8DE] space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <IndianRupee className="w-3.5 h-3.5 text-[#2C5F2D]" />
+                        <span className="font-extrabold text-stone-900 text-xs">
+                          {isCommercial ? 'Recipe Food Costing & Menu Margin' : 'Estimated Meal Cost Breakdown'}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-stone-500 tabular-nums">
+                        {selectedRecipeCosting.matchedPricedCount}/{selectedRecipeCosting.totalIngredients} matched to DB prices
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="bg-white rounded-xl p-2 border border-[#E2E8DE]">
+                        <span className="text-[10px] text-stone-500 block">Batch Cost</span>
+                        <span className="text-sm font-black text-stone-900 tabular-nums">
+                          ₹{selectedRecipeCosting.totalBatchCost.toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                      <div className="bg-white rounded-xl p-2 border border-[#E2E8DE]">
+                        <span className="text-[10px] text-stone-500 block">Cost / Plate</span>
+                        <span className="text-sm font-black text-[#2C5F2D] tabular-nums">
+                          ₹{selectedRecipeCosting.costPerServing.toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                      <div className="bg-white rounded-xl p-2 border border-[#E2E8DE]">
+                        <span className="text-[10px] text-stone-500 block">Yield</span>
+                        <span className="text-sm font-black text-stone-800 tabular-nums">
+                          {selectedRecipeCosting.totalServings} plates
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-[#E2E8DE] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <label className="flex items-center gap-2 text-[11px] font-bold text-stone-700">
+                        <span>{isCommercial ? 'Menu Price / Plate (₹)' : 'Compare Takeout Price (₹)'}</span>
+                        <input
+                          type="number"
+                          min={10}
+                          value={menuPriceInput}
+                          onChange={(e) => setMenuPriceInput(e.target.value)}
+                          placeholder={String(selectedRecipeCosting.suggestedMenuPrice)}
+                          className="w-20 px-2 py-1 bg-white border border-stone-300 rounded-lg text-xs font-bold text-stone-900 tabular-nums focus:outline-none focus:ring-2 focus:ring-[#2C5F2D]"
+                        />
+                      </label>
+
+                      <div className="text-[11px] text-stone-600 tabular-nums flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <span>
+                          Food Cost: <strong className={marginTone.cls}>{foodCostPct}%</strong> ({marginTone.label})
+                        </span>
+                        <span>·</span>
+                        <span>
+                          {isCommercial ? 'Gross Profit:' : 'Saved vs Takeout:'}{' '}
+                          <strong className={profitPerPlate >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
+                            ₹{profitPerPlate}/plate
+                          </strong>{' '}
+                          (₹{batchProfit.toLocaleString('en-IN')} batch)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div>
                 <h4 className="font-bold text-stone-900 text-sm mb-2">
