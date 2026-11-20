@@ -16,8 +16,10 @@ import {
   UtensilsCrossed,
   Building2,
   Search,
+  Lock,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
+import { api } from '../services/api';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
@@ -37,8 +39,9 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenScaleModal,
   onOpenCommandPalette,
 }) => {
-  const { stats, notificationLog, dbConnected, dbInfo, preferences } = useInventory();
+  const { stats, notificationLog, dbConnected, dbInfo, preferences, lockWorkspace } = useInventory();
   const [showNotifications, setShowNotifications] = useState(false);
+  const [downloadingZip, setDownloadingZip] = useState(false);
 
   const scaleMeta =
     preferences.operationScale === 'enterprise'
@@ -47,8 +50,16 @@ export const Header: React.FC<HeaderProps> = ({
       ? { label: 'Restaurant', icon: <UtensilsCrossed className="w-3.5 h-3.5 text-emerald-700" />, style: 'bg-emerald-50 text-emerald-900 border-emerald-300 hover:bg-emerald-100' }
       : { label: 'Household', icon: <Home className="w-3.5 h-3.5 text-[#2C5F2D]" />, style: 'bg-[#F7F8F4] text-stone-800 border-[#E2E8DE] hover:bg-[#EAF3E6]' };
 
-  const handleDownloadZip = () => {
-    window.location.href = '/api/download-zip';
+  const handleDownloadZip = async () => {
+    if (downloadingZip) return;
+    setDownloadingZip(true);
+    try {
+      await api.downloadProjectZip();
+    } catch (err) {
+      console.error('ZIP download failed:', err);
+    } finally {
+      setDownloadingZip(false);
+    }
   };
 
   return (
@@ -155,25 +166,39 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
-          {/* Download Project ZIP Button */}
+          {/* Download Project ZIP Button (Authenticated) */}
           <button
+            type="button"
             onClick={handleDownloadZip}
-            title="Download complete project ZIP with backend, database, and source code"
-            className="px-3 py-1.5 rounded-xl text-xs font-bold bg-stone-900 text-white hover:bg-stone-800 active:scale-95 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+            disabled={downloadingZip}
+            title="Download sanitized project source archive (excludes secrets & database)"
+            className="px-3 py-1.5 rounded-xl text-xs font-bold bg-stone-900 text-white hover:bg-stone-800 active:scale-95 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-60"
           >
             <Download className="w-3.5 h-3.5 text-[#A3E635]" />
-            <span className="hidden sm:inline">Download ZIP</span>
+            <span className="hidden sm:inline">{downloadingZip ? 'Packaging...' : 'Download ZIP'}</span>
             <span className="sm:hidden">ZIP</span>
           </button>
 
           {/* Morning Digest Briefing */}
           <button
+            type="button"
             onClick={onOpenMorningDigest}
             title="Open Morning Kitchen Digest"
             className="p-2 sm:px-2.5 sm:py-1.5 rounded-xl text-xs font-semibold bg-[#2C5F2D]/10 text-[#2C5F2D] hover:bg-[#2C5F2D]/15 active:scale-95 transition-all cursor-pointer flex items-center gap-1.5"
           >
             <Sparkles className="w-3.5 h-3.5 text-[#2C5F2D]" />
             <span className="hidden md:inline">Digest</span>
+          </button>
+
+          {/* Lock Workspace */}
+          <button
+            type="button"
+            onClick={() => void lockWorkspace()}
+            title="Lock Workspace"
+            aria-label="Lock Workspace"
+            className="p-2 rounded-xl text-stone-700 hover:bg-stone-100 active:scale-95 transition-all cursor-pointer"
+          >
+            <Lock className="w-4 h-4 text-stone-600" />
           </button>
 
           {/* Notifications Dropdown */}

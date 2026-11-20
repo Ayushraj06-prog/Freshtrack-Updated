@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { SHELF_LIFE_DATABASE, getRemainingDays } from '../data/shelfLifeData';
+import { downloadSafeCsv } from '../utils/security';
 import { ChecklistCategory, InvoiceStatus, StorageZoneType, Supplier } from '../types/inventory';
 
 const INDIAN_STORAGE_TIPS: Record<string, string> = {
@@ -265,22 +266,16 @@ export const OperationsView: React.FC<OperationsViewProps> = ({ onOpenStocktake 
     const headers = ['Timestamp', 'Zone Name', 'Zone Type', 'Temperature (C)', 'Humidity (%)', 'Compliance Status', 'Checked By', 'Branch', 'Notes'];
     const rows = storageLogs.map((l) => [
       l.loggedAt,
-      `"${l.zoneName.replace(/"/g, '""')}"`,
+      l.zoneName,
       l.zoneType,
       l.temperatureC,
       l.humidityPct ?? '',
       l.status.toUpperCase(),
-      `"${(l.checkedBy || '').replace(/"/g, '""')}"`,
-      `"${(l.branchZone || '').replace(/"/g, '""')}"`,
-      `"${(l.notes || '').replace(/"/g, '""')}"`,
+      l.checkedBy || '',
+      l.branchZone || '',
+      l.notes || '',
     ]);
-    const csv = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const link = document.createElement('a');
-    link.href = encodeURI(csv);
-    link.download = `freshtrack_fssai_temp_log_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadSafeCsv(`freshtrack_fssai_temp_log_${new Date().toISOString().split('T')[0]}.csv`, headers, rows);
   };
 
   const passRate = useMemo(() => {
@@ -430,24 +425,18 @@ export const OperationsView: React.FC<OperationsViewProps> = ({ onOpenStocktake 
       'Notes',
     ];
     const rows = invoices.map((inv) => [
-      `"${inv.invoiceNumber.replace(/"/g, '""')}"`,
-      `"${inv.supplierName.replace(/"/g, '""')}"`,
+      inv.invoiceNumber,
+      inv.supplierName,
       inv.invoiceDate,
       inv.dueDate || '',
       inv.amountRs,
-      `"${inv.category.replace(/"/g, '""')}"`,
+      inv.category,
       inv.paymentStatus.toUpperCase(),
       inv.itemsCount ?? '',
-      `"${(inv.branchZone || '').replace(/"/g, '""')}"`,
-      `"${(inv.notes || '').replace(/"/g, '""')}"`,
+      inv.branchZone || '',
+      inv.notes || '',
     ]);
-    const csv = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const link = document.createElement('a');
-    link.href = encodeURI(csv);
-    link.download = `freshtrack_spend_invoices_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadSafeCsv(`freshtrack_spend_invoices_${new Date().toISOString().split('T')[0]}.csv`, headers, rows);
   };
 
   return (

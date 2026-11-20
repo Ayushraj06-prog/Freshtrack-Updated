@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { sanitizeImageUrl } from './security.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -210,6 +211,12 @@ sqliteDb.exec(`
     notes TEXT,
     createdAt TEXT,
     updatedAt TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS auth_config (
+    id TEXT PRIMARY KEY,
+    passcodeHash TEXT NOT NULL,
+    updatedAt TEXT NOT NULL
   );
 `);
 
@@ -531,8 +538,31 @@ export const db = {
     return {
       type: 'sqlite',
       version: '3.x (native node:sqlite DatabaseSync)',
-      path: dbFilePath,
+      path: 'data/freshtrack.db',
     };
+  },
+
+  getAuthConfig(): { passcodeHash: string; updatedAt: string } | null {
+    const stmt = sqliteDb.prepare('SELECT passcodeHash, updatedAt FROM auth_config WHERE id = ?');
+    const row = stmt.get('default') as { passcodeHash?: string; updatedAt?: string } | undefined;
+    if (!row?.passcodeHash) return null;
+    return {
+      passcodeHash: row.passcodeHash,
+      updatedAt: row.updatedAt || new Date().toISOString(),
+    };
+  },
+
+  setPasscodeHash(passcodeHash: string) {
+    const nowIso = new Date().toISOString();
+    const stmt = sqliteDb.prepare(`
+      INSERT INTO auth_config (id, passcodeHash, updatedAt)
+      VALUES ('default', @passcodeHash, @updatedAt)
+      ON CONFLICT(id) DO UPDATE SET
+        passcodeHash = excluded.passcodeHash,
+        updatedAt = excluded.updatedAt
+    `);
+    stmt.run({ passcodeHash, updatedAt: nowIso });
+    return { updatedAt: nowIso };
   },
 
   getAllItems() {
@@ -567,7 +597,7 @@ export const db = {
       source: item.source || 'manual',
       barcode: item.barcode ?? null,
       notes: item.notes ?? null,
-      imageUrl: item.imageUrl ?? null,
+      imageUrl: sanitizeImageUrl(item.imageUrl),
       batchCode: item.batchCode ?? null,
       supplierName: item.supplierName ?? null,
       parLevel: item.parLevel !== null && item.parLevel !== undefined && !isNaN(Number(item.parLevel)) ? Number(item.parLevel) : null,
@@ -623,7 +653,7 @@ export const db = {
       source: updates.source ?? existing.source,
       barcode: (updates.barcode !== undefined ? updates.barcode : existing.barcode) ?? null,
       notes: (updates.notes !== undefined ? updates.notes : existing.notes) ?? null,
-      imageUrl: (updates.imageUrl !== undefined ? updates.imageUrl : existing.imageUrl) ?? null,
+      imageUrl: sanitizeImageUrl(updates.imageUrl !== undefined ? updates.imageUrl : existing.imageUrl),
       batchCode: (updates.batchCode !== undefined ? updates.batchCode : existing.batchCode) ?? null,
       supplierName: (updates.supplierName !== undefined ? updates.supplierName : existing.supplierName) ?? null,
       parLevel: normalizedPar,
@@ -981,7 +1011,9 @@ export const db = {
       id: recipe.id || `custom-recipe-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       title: recipe.title || 'My Custom Dish',
       description: recipe.description ?? '',
-      image: recipe.image ?? 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=500&q=80',
+      image:
+        sanitizeImageUrl(recipe.image) ||
+        'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=500&q=80',
       timeMinutes: Number(recipe.timeMinutes) || 15,
       servings: Number(recipe.servings) || 2,
       difficulty: recipe.difficulty ?? 'Easy',
@@ -1870,62 +1902,67 @@ export const db = {
     if (!snapshot || typeof snapshot !== 'object') {
       throw new Error('Invalid backup JSON payload');
     }
-    if (snapshot.preferences) {
+    const MAX_RESTORE_ROWS = 2000;
+    const cap = (arr: any[]): any[] => arr.slice(0, MAX_RESTORE_ROWS);
+
+    if (snapshot.preferences && typeof snapshot.preferences === 'object') {
       this.updatePreferences(snapshot.preferences);
     }
     if (Array.isArray(snapshot.items)) {
       sqliteDb.exec('DELETE FROM items;');
-      this.insertItems(snapshot.items);
+      this.insertItems(cap(snapshot.items));
     }
     if (Array.isArray(snapshot.customRecipes)) {
       sqliteDb.exec('DELETE FROM custom_recipes;');
-      for (const r of snapshot.customRecipes) {
+      for (const r of cap(snapshot.customRecipes)) {
         this.saveCustomRecipe(r);
       }
     }
     if (Array.isArray(snapshot.restockList)) {
       sqliteDb.exec('DELETE FROM restock_list;');
-      for (const r of snapshot.restockList) {
+      for (const r of cap(snapshot.restockList)) {
         this.saveRestockItem(r);
       }
     }
     if (Array.isArray(snapshot.mealPlans)) {
       sqliteDb.exec('DELETE FROM meal_plans;');
-      for (const m of snapshot.mealPlans) {
+      for (const m of cap(snapshot.mealPlans)) {
         this.saveMealPlan(m);
       }
     }
     if (Array.isArray(snapshot.suppliers)) {
       sqliteDb.exec('DELETE FROM suppliers;');
-      for (const s of snapshot.suppliers) {
+      for (const s of cap(snapshot.suppliers)) {
         this.saveSupplier(s);
       }
     }
     if (Array.isArray(snapshot.storageLogs)) {
       sqliteDb.exec('DELETE FROM storage_logs;');
-      for (const l of snapshot.storageLogs) {
+      for (const l of cap(snapshot.storageLogs)) {
         this.addStorageLog(l);
       }
     }
     if (Array.isArray(snapshot.checklists)) {
       sqliteDb.exec('DELETE FROM checklists;');
-      for (const c of snapshot.checklists) {
+      for (const c of cap(snapshot.checklists)) {
         this.saveChecklistItem(c);
       }
     }
     if (Array.isArray(snapshot.wasteLogs)) {
       sqliteDb.exec('DELETE FROM waste_logs;');
-      for (const w of snapshot.wasteLogs) {
-        this.logWaste({ ...w, itemId: null });
+      for (const w of cap(snapshot.wasteLogs)) {
+        if (w && typeof w === 'object') {
+          this.logWaste({ ...w, itemId: null });
+        }
       }
     }
     if (Array.isArray(snapshot.invoices)) {
       sqliteDb.exec('DELETE FROM invoices;');
-      for (const inv of snapshot.invoices) {
+      for (const inv of cap(snapshot.invoices)) {
         this.saveInvoice(inv);
       }
     }
-    this.logActivity('restocked', 'Full Database Restore', `Restored backup (${Array.isArray(snapshot.items) ? snapshot.items.length : 0} items)`);
+    this.logActivity('restocked', 'Full Database Restore', `Restored backup (${Array.isArray(snapshot.items) ? Math.min(snapshot.items.length, MAX_RESTORE_ROWS) : 0} items)`);
     return this.exportBackupJson();
   },
 };

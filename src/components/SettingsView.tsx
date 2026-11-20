@@ -23,8 +23,12 @@ import {
   Upload,
   History,
   FileJson,
+  ShieldCheck,
+  Lock,
+  KeyRound,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
+import { api } from '../services/api';
 import { aiService, AiStatus } from '../services/aiService';
 import { OperationScale } from '../types/inventory';
 import { runReceiptParserTests } from '../utils/receiptParser';
@@ -45,6 +49,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenScaleModal }) 
     activityLogs,
     dbInfo,
     dbConnected,
+    authSource,
+    lockWorkspace,
   } = useInventory();
 
   const [testResults, setTestResults] = useState<any | null>(null);
@@ -54,6 +60,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenScaleModal }) 
   const [dbActionMsg, setDbActionMsg] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const [logFilter, setLogFilter] = useState('');
+  const [currentPasscode, setCurrentPasscode] = useState('');
+  const [newPasscode, setNewPasscode] = useState('');
+  const [confirmNewPasscode, setConfirmNewPasscode] = useState('');
+  const [passcodeMsg, setPasscodeMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [updatingPasscode, setUpdatingPasscode] = useState(false);
 
   useEffect(() => {
     aiService.getStatus().then(setAiStatus);
@@ -88,10 +99,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenScaleModal }) 
     }, 250);
   };
 
-  const handleDownloadZip = () => {
+  const handleDownloadZip = async () => {
     setDownloading(true);
-    window.location.href = '/api/download-zip';
-    setTimeout(() => setDownloading(false), 2000);
+    try {
+      await api.downloadProjectZip();
+    } catch (err: any) {
+      showDbToast(err?.message || 'Could not download archive.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleChangePasscode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasscodeMsg(null);
+    if (newPasscode.trim().length < 8) {
+      setPasscodeMsg({ type: 'err', text: 'New passcode must be at least 8 characters.' });
+      return;
+    }
+    if (newPasscode !== confirmNewPasscode) {
+      setPasscodeMsg({ type: 'err', text: 'New passcodes do not match.' });
+      return;
+    }
+    setUpdatingPasscode(true);
+    try {
+      await api.changeWorkspacePasscode(currentPasscode.trim(), newPasscode.trim());
+      setCurrentPasscode('');
+      setNewPasscode('');
+      setConfirmNewPasscode('');
+      setPasscodeMsg({ type: 'ok', text: 'Workspace passcode updated and session rotated.' });
+    } catch (err: any) {
+      setPasscodeMsg({ type: 'err', text: err?.message || 'Failed to update passcode.' });
+    } finally {
+      setUpdatingPasscode(false);
+    }
   };
 
   return (
@@ -236,6 +277,104 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenScaleModal }) 
             />
           </div>
         </div>
+      </div>
+
+      {/* 0.5 WORKSPACE SECURITY & PASSCODE CONTROLS */}
+      <div className="bg-white rounded-3xl p-5 border border-[#E2E8DE] shadow-xs space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-stone-100">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-[#2C5F2D]" />
+            <h3 className="font-extrabold text-sm text-stone-900">
+              Workspace Security &amp; Access Protection
+            </h3>
+          </div>
+          <button
+            type="button"
+            onClick={() => void lockWorkspace()}
+            className="px-3 py-1.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+          >
+            <Lock className="w-3.5 h-3.5 text-[#A3E635]" />
+            <span>Lock Workspace Now</span>
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+          <div className="p-3 bg-[#F7F8F4] rounded-xl border border-[#E2E8DE]">
+            <span className="font-bold text-stone-800 block">Auth &amp; Sessions</span>
+            <span className="text-[11px] text-stone-500">Salted scrypt + HMAC-SHA256 Bearer tokens</span>
+          </div>
+          <div className="p-3 bg-[#F7F8F4] rounded-xl border border-[#E2E8DE]">
+            <span className="font-bold text-stone-800 block">Attack Defenses</span>
+            <span className="text-[11px] text-stone-500">Rate limiting, same-origin CSRF guard &amp; CSP</span>
+          </div>
+          <div className="p-3 bg-[#F7F8F4] rounded-xl border border-[#E2E8DE]">
+            <span className="font-bold text-stone-800 block">Data Hygiene</span>
+            <span className="text-[11px] text-stone-500">Secrets excluded from ZIPs, safe CSV exports</span>
+          </div>
+        </div>
+
+        {authSource === 'env' ? (
+          <p className="text-xs text-stone-600 bg-stone-50 border border-stone-200 rounded-xl p-3">
+            Passcode is managed via the server <code className="font-mono font-bold">ADMIN_PASSCODE</code> environment secret. Update it in your deployment environment variables to rotate access.
+          </p>
+        ) : (
+          <form onSubmit={handleChangePasscode} className="space-y-3 pt-1">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-stone-800">
+              <KeyRound className="w-3.5 h-3.5 text-[#2C5F2D]" />
+              <span>Rotate Workspace Passcode</span>
+            </div>
+
+            {passcodeMsg && (
+              <div
+                className={`p-2.5 rounded-xl text-xs font-bold border ${
+                  passcodeMsg.type === 'ok'
+                    ? 'bg-[#EAF3E6] border-[#6B9B4F] text-[#2C5F2D]'
+                    : 'bg-rose-50 border-rose-200 text-rose-700'
+                }`}
+              >
+                {passcodeMsg.text}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+              <input
+                type="password"
+                autoComplete="current-password"
+                value={currentPasscode}
+                onChange={(e) => setCurrentPasscode(e.target.value)}
+                placeholder="Current passcode"
+                className="px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-[#2C5F2D] focus:outline-none"
+                required
+              />
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={newPasscode}
+                onChange={(e) => setNewPasscode(e.target.value)}
+                placeholder="New passcode (8+ chars)"
+                className="px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-[#2C5F2D] focus:outline-none"
+                required
+              />
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirmNewPasscode}
+                onChange={(e) => setConfirmNewPasscode(e.target.value)}
+                placeholder="Confirm new passcode"
+                className="px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:ring-2 focus:ring-[#2C5F2D] focus:outline-none"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={updatingPasscode}
+              className="px-4 py-2 rounded-xl bg-[#2C5F2D] hover:bg-[#204721] disabled:opacity-60 text-white text-xs font-bold cursor-pointer"
+            >
+              {updatingPasscode ? 'Updating Passcode...' : 'Update Workspace Passcode'}
+            </button>
+          </form>
+        )}
       </div>
 
       {/* 1. DOWNLOAD COMPLETE PROJECT ZIP CARD (Prominent) */}

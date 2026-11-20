@@ -29,11 +29,12 @@ import { ScaleSelectorModal } from './components/ScaleSelectorModal';
 import { CommandPaletteModal } from './components/CommandPaletteModal';
 import { FifoLabelPrinterModal } from './components/FifoLabelPrinterModal';
 import { StocktakeModal } from './components/StocktakeModal';
+import { SecurityGate } from './components/SecurityGate';
 import { OfflineIndicator } from './components/PWAInstallButton';
 import { OperationScale } from './types/inventory';
 
 function MainApp() {
-  const { items, preferences, updatePreferences, dbConnected } = useInventory();
+  const { items, preferences, updatePreferences, dbConnected, authMode, authSource, handleAuthSuccess } = useInventory();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'inventory' | 'recipes' | 'operations' | 'settings'>('inventory');
   const [inventoryStatusJump, setInventoryStatusJump] = useState<'active' | 'urgent' | 'low-stock' | 'used' | 'restock' | 'all' | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -77,6 +78,16 @@ function MainApp() {
       scaleConfigured: true,
     });
   };
+
+  if (authMode !== 'authenticated') {
+    return (
+      <SecurityGate
+        mode={authMode}
+        source={authSource}
+        onAuthenticated={handleAuthSuccess}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#F4F6F0] text-stone-900 font-sans flex flex-col selection:bg-[#2C5F2D] selection:text-white">

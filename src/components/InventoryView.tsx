@@ -40,6 +40,7 @@ import { TransferStockModal } from './TransferStockModal';
 import { LogWasteModal } from './LogWasteModal';
 import { QuickLeftoverModal } from './QuickLeftoverModal';
 import { exportExpiryCalendarIcs } from '../utils/icsExport';
+import { safeImageUrl } from '../utils/security';
 
 interface InventoryViewProps {
   onOpenAddModal: () => void;
@@ -670,9 +671,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                           {isChecked ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5 text-stone-400" />}
                         </span>
                       )}
-                      {item.imageUrl ? (
+                      {safeImageUrl(item.imageUrl) ? (
                         <img
-                          src={item.imageUrl}
+                          src={safeImageUrl(item.imageUrl)}
                           alt={item.name}
                           className="w-12 h-12 object-contain rounded-xl bg-white p-1 border border-stone-200 shrink-0"
                         />

@@ -6,6 +6,8 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { calculateExpiryDate, getRemainingDays } from '../data/shelfLifeData';
 import { api } from '../services/api';
+import { onUnauthorized } from '../services/authSession';
+import { downloadSafeCsv } from '../utils/security';
 import {
   InventoryItem,
   UserPreferences,
@@ -43,6 +45,10 @@ interface InventoryContextType {
   preferences: UserPreferences;
   dbInfo: DbInfo | null;
   dbConnected: boolean;
+  authMode: 'loading' | 'setup' | 'locked' | 'authenticated';
+  authSource: 'env' | 'database' | 'unclaimed';
+  handleAuthSuccess: () => Promise<void>;
+  lockWorkspace: () => Promise<void>;
   notificationLog: { id: string; title: string; message: string; timestamp: string }[];
   addItem: (item: Omit<InventoryItem, 'id'>) => Promise<string>;
   addMultipleItems: (items: Omit<InventoryItem, 'id'>[]) => Promise<string[]>;
@@ -124,6 +130,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFS);
   const [dbInfo, setDbInfo] = useState<DbInfo | null>(null);
   const [dbConnected, setDbConnected] = useState<boolean>(false);
+  const [authMode, setAuthMode] = useState<'loading' | 'setup' | 'locked' | 'authenticated'>('loading');
+  const [authSource, setAuthSource] = useState<'env' | 'database' | 'unclaimed'>('unclaimed');
   const [notificationLog, setNotificationLog] = useState<
     { id: string; title: string; message: string; timestamp: string }[]
   >([]);
@@ -179,26 +187,79 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setActivityLogs(backendLogs || []);
       setDbConnected(true);
     } catch (err) {
-      console.warn('Backend DB initial sync retry:', err);
+      console.warn('Backend DB sync deferred:', err);
       setDbConnected(false);
-      // Local fallback if server is starting
-      try {
-        const saved = localStorage.getItem('freshtrack_inventory_backup');
-        if (saved) setItems(JSON.parse(saved));
-      } catch {}
     }
   };
 
-  useEffect(() => {
-    refreshBackendData();
-  }, []);
+  const resetInMemorySensitiveState = () => {
+    setItems([]);
+    setCustomRecipes([]);
+    setRestockList([]);
+    setMealPlans([]);
+    setSuppliers([]);
+    setStorageLogs([]);
+    setChecklists([]);
+    setWasteLogs([]);
+    setInvoices([]);
+    setActivityLogs([]);
+    setDbInfo(null);
+    setDbConnected(false);
+  };
 
-  // Sync to local backup cache
-  useEffect(() => {
+  const checkAuthAndBootstrap = async () => {
+    // Purge any legacy plaintext inventory backups from localStorage
     try {
-      localStorage.setItem('freshtrack_inventory_backup', JSON.stringify(items));
+      localStorage.removeItem('freshtrack_inventory_backup');
     } catch {}
-  }, [items]);
+
+    try {
+      const status = await api.getAuthStatus();
+      setAuthSource(status.source);
+      if (!status.configured) {
+        resetInMemorySensitiveState();
+        setAuthMode('setup');
+        return;
+      }
+      if (!status.authenticated) {
+        resetInMemorySensitiveState();
+        setAuthMode('locked');
+        return;
+      }
+      setAuthMode('authenticated');
+      await refreshBackendData();
+    } catch (err) {
+      console.warn('Auth status check retry:', err);
+      setAuthMode('locked');
+    }
+  };
+
+  const handleAuthSuccess = async () => {
+    const status = await api.getAuthStatus().catch(() => ({
+      configured: true,
+      source: 'database' as const,
+      authenticated: true,
+      expiresAt: null,
+    }));
+    setAuthSource(status.source);
+    setAuthMode('authenticated');
+    await refreshBackendData();
+  };
+
+  const lockWorkspace = async () => {
+    await api.logoutWorkspace();
+    resetInMemorySensitiveState();
+    setAuthMode('locked');
+  };
+
+  useEffect(() => {
+    checkAuthAndBootstrap();
+    const unsubscribe = onUnauthorized(() => {
+      resetInMemorySensitiveState();
+      setAuthMode((prev) => (prev === 'setup' ? 'setup' : 'locked'));
+    });
+    return unsubscribe;
+  }, []);
 
   // Compute urgent reminders for notification log
   useEffect(() => {
@@ -746,7 +807,6 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       await api.clearAllItems();
       api.getDbInfo().then(setDbInfo).catch(() => {});
     } catch {}
-    localStorage.removeItem('freshtrack_inventory_backup');
   };
 
   const exportCsv = () => {
@@ -769,7 +829,7 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const rows = items.map((i) => [
       i.id,
-      `"${i.name.replace(/"/g, '""')}"`,
+      i.name,
       i.category,
       i.storage,
       i.quantity,
@@ -782,10 +842,10 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       i.source,
       ...(isCommercial
         ? [
-            `"${(i.batchCode || '').replace(/"/g, '""')}"`,
-            `"${(i.supplierName || '').replace(/"/g, '""')}"`,
+            i.batchCode || '',
+            i.supplierName || '',
             i.parLevel ?? '',
-            `"${(i.branchZone || preferences.branchLocation || '').replace(/"/g, '""')}"`,
+            i.branchZone || preferences.branchLocation || '',
             i.status === 'active' && i.parLevel !== null && i.parLevel !== undefined && i.quantity <= i.parLevel
               ? 'YES'
               : 'NO',
@@ -793,16 +853,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         : []),
     ]);
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
     const prefix = isCommercial ? `freshtrack_${preferences.operationScale}_audit` : 'freshtrack_inventory';
-    link.setAttribute('download', `${prefix}_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadSafeCsv(`${prefix}_${new Date().toISOString().split('T')[0]}.csv`, headers, rows);
   };
 
   const stats: InventoryStats = useMemo(() => {
@@ -912,6 +964,10 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         preferences,
         dbInfo,
         dbConnected,
+        authMode,
+        authSource,
+        handleAuthSuccess,
+        lockWorkspace,
         notificationLog,
         addItem,
         addMultipleItems,

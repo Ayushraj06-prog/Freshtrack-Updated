@@ -27,6 +27,7 @@ import {
   TrendingDown,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
+import { api } from '../services/api';
 import { getRemainingDays } from '../data/shelfLifeData';
 import { InventoryItem, WasteReason } from '../types/inventory';
 import { UseItemModal } from './UseItemModal';
@@ -832,14 +833,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </p>
         </div>
 
-        <a
-          href="/api/download-zip"
-          download="freshtrack-kitchen-app.zip"
+        <button
+          type="button"
+          onClick={() => void api.downloadProjectZip()}
           className="px-4 py-2.5 rounded-2xl bg-[#2C5F2D] hover:bg-[#204721] text-white font-bold text-xs shadow-md shadow-[#2C5F2D]/20 active:scale-95 transition-all flex items-center justify-center gap-2 shrink-0 cursor-pointer"
         >
           <Download className="w-4 h-4 text-[#A3E635]" />
           <span>Download .ZIP Archive</span>
-        </a>
+        </button>
       </div>
 
       {/* Category Valuation vs Waste Risk & Staples Breakdown */}

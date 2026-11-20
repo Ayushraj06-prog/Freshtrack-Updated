@@ -1,36 +1,44 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * Project ZIP Builder & Downloader
- * Bundles the full source code, backend, database config, and dependencies.
+ * Builds a sanitized source archive inside a private .tmp directory (never publicly exposed)
+ * using argument-vector execution without a shell.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, '..');
-const scriptPath = path.join(rootDir, 'scripts/create_project_zip.py');
-const publicDir = path.join(rootDir, 'public');
-const targetZip = path.join(publicDir, 'freshtrack-kitchen-app.zip');
+const scriptPath = path.resolve(rootDir, 'scripts', 'create_project_zip.py');
+const privateZipDir = path.resolve(rootDir, '.tmp');
+const targetZip = path.resolve(privateZipDir, 'freshtrack-kitchen-app.zip');
+
+// Verify path confinement strictly inside privateZipDir
+if (!targetZip.startsWith(privateZipDir + path.sep)) {
+  throw new Error('Invalid ZIP output path confinement');
+}
 
 export function generateProjectZip(): string {
-  if (!fs.existsSync(publicDir)) {
-    fs.mkdirSync(publicDir, { recursive: true });
+  if (!fs.existsSync(privateZipDir)) {
+    fs.mkdirSync(privateZipDir, { recursive: true });
   }
 
   try {
-    execSync(`python3 "${scriptPath}" "${rootDir}" "${targetZip}"`, {
+    execFileSync('python3', [scriptPath, rootDir, targetZip], {
       cwd: rootDir,
       stdio: 'pipe',
+      shell: false,
+      timeout: 30_000,
     });
     return targetZip;
   } catch (err: any) {
-    console.error('Failed to generate zip with Python script:', err.message);
+    console.error('Failed to generate sanitized project zip:', err?.message || err);
     throw err;
   }
 }

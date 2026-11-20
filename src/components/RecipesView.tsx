@@ -28,6 +28,7 @@ import { aiService } from '../services/aiService';
 import { DietType, Recipe, CustomRecipe } from '../types/inventory';
 import { CustomRecipeModal } from './CustomRecipeModal';
 import { MealPrepPlanner } from './MealPrepPlanner';
+import { safeImageUrl } from '../utils/security';
 
 interface RecipesViewProps {
   initialExpiringItem?: string | null;
@@ -706,7 +707,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
                   {/* Recipe Cover Image */}
                   <div className="relative aspect-video overflow-hidden bg-stone-100">
                     <img
-                      src={recipe.image}
+                      src={safeImageUrl(recipe.image, 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=500&q=80')}
                       alt={recipe.title}
                       className="w-full h-full object-cover group-hover:scale-103 transition-transform duration-300"
                       loading="lazy"
@@ -908,7 +909,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-[#E2E8DE] flex flex-col max-h-[90vh] overflow-hidden">
             <div className="relative aspect-video bg-stone-900 shrink-0">
               <img
-                src={selectedRecipe.image}
+                src={safeImageUrl(selectedRecipe.image, 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=500&q=80')}
                 alt={selectedRecipe.title}
                 className="w-full h-full object-cover"
               />

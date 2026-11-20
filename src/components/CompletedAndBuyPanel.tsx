@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { calculateExpiryDate, estimateShelfLife, SHELF_LIFE_DATABASE } from '../data/shelfLifeData';
+import { downloadSafeCsv } from '../utils/security';
 import { InventoryItem, ItemCategory, RestockItem, StorageLocation } from '../types/inventory';
 
 interface StockModalTarget {
@@ -302,7 +303,7 @@ export const CompletedAndBuyPanel: React.FC = () => {
     if (pendingBuyItems.length === 0) return;
     const headers = ['Item Name', 'Category', 'Buy Qty', 'Unit', 'Storage', 'Est Price (INR)', 'Priority', 'Reason', 'Supplier', 'Branch/Zone'];
     const rows = pendingBuyItems.map((r) => [
-      `"${r.name.replace(/"/g, '""')}"`,
+      r.name,
       r.category,
       r.targetQuantity,
       r.unit,
@@ -310,16 +311,10 @@ export const CompletedAndBuyPanel: React.FC = () => {
       r.estimatedPrice ?? '',
       r.priority,
       r.reason,
-      `"${(r.supplierName || '').replace(/"/g, '""')}"`,
-      `"${(r.branchZone || preferences.branchLocation || '').replace(/"/g, '""')}"`,
+      r.supplierName || '',
+      r.branchZone || preferences.branchLocation || '',
     ]);
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-    const link = document.createElement('a');
-    link.setAttribute('href', encodeURI(csvContent));
-    link.setAttribute('download', `freshtrack_buy_order_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadSafeCsv(`freshtrack_buy_order_${new Date().toISOString().split('T')[0]}.csv`, headers, rows);
   };
 
   return (

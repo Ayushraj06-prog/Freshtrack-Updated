@@ -1,11 +1,12 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * FreshTrack Backend API Client
- * Typed client for interacting with the backend SQLite database.
+ * Authenticated typed client for interacting with the hardened SQLite backend.
  */
 
+import { authFetch, setAuthToken, clearAuthToken } from './authSession';
 import {
   InventoryItem,
   UserPreferences,
@@ -28,22 +29,101 @@ import {
   InvoiceStatus,
 } from '../types/inventory';
 
+export interface AuthStatusResponse {
+  configured: boolean;
+  source: 'env' | 'database' | 'unclaimed';
+  authenticated: boolean;
+  expiresAt: string | null;
+}
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const data = await res.json();
+    if (data?.error && typeof data.error === 'string') return data.error;
+  } catch {}
+  return `${fallback} (${res.status})`;
+}
+
 export const api = {
+  // ---------------- Authentication & Security ----------------
+  async getAuthStatus(): Promise<AuthStatusResponse> {
+    const res = await authFetch('/api/auth/status');
+    if (!res.ok) throw new Error(await parseErrorMessage(res, 'Failed to check security status'));
+    return res.json();
+  },
+
+  async setupWorkspacePasscode(passcode: string): Promise<{ token: string; expiresAt: string }> {
+    const res = await authFetch('/api/auth/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passcode }),
+    });
+    if (!res.ok) throw new Error(await parseErrorMessage(res, 'Failed to configure passcode'));
+    const data = await res.json();
+    if (data.token) setAuthToken(data.token);
+    return data;
+  },
+
+  async loginWorkspace(passcode: string): Promise<{ token: string; expiresAt: string }> {
+    const res = await authFetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passcode }),
+    });
+    if (!res.ok) throw new Error(await parseErrorMessage(res, 'Sign in failed'));
+    const data = await res.json();
+    if (data.token) setAuthToken(data.token);
+    return data;
+  },
+
+  async logoutWorkspace(): Promise<void> {
+    try {
+      await authFetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    clearAuthToken();
+  },
+
+  async changeWorkspacePasscode(currentPasscode: string, newPasscode: string): Promise<void> {
+    const res = await authFetch('/api/auth/change-passcode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPasscode, newPasscode }),
+    });
+    if (!res.ok) throw new Error(await parseErrorMessage(res, 'Failed to update passcode'));
+    const data = await res.json();
+    if (data.token) setAuthToken(data.token);
+  },
+
+  async downloadProjectZip(): Promise<void> {
+    const res = await authFetch('/api/download-zip');
+    if (!res.ok) throw new Error(await parseErrorMessage(res, 'Failed to download archive'));
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'freshtrack-kitchen-app.zip';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  },
+
+  // ---------------- Core Inventory & Database ----------------
   async getDbInfo(): Promise<DbInfo> {
-    const res = await fetch('/api/db/info');
+    const res = await authFetch('/api/db/info');
     if (!res.ok) throw new Error(`Failed to get DB info: ${res.status}`);
     return res.json();
   },
 
   async fetchItems(): Promise<InventoryItem[]> {
-    const res = await fetch('/api/items');
+    const res = await authFetch('/api/items');
     if (!res.ok) throw new Error(`Failed to fetch items: ${res.status}`);
     const data = await res.json();
     return data.items || [];
   },
 
   async createItem(item: Omit<InventoryItem, 'id'>): Promise<InventoryItem> {
-    const res = await fetch('/api/items', {
+    const res = await authFetch('/api/items', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(item),
@@ -54,7 +134,7 @@ export const api = {
   },
 
   async createMultipleItems(items: Omit<InventoryItem, 'id'>[]): Promise<InventoryItem[]> {
-    const res = await fetch('/api/items', {
+    const res = await authFetch('/api/items', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ items }),
@@ -65,7 +145,7 @@ export const api = {
   },
 
   async updateItem(id: string, updates: Partial<InventoryItem>): Promise<InventoryItem> {
-    const res = await fetch(`/api/items/${id}`, {
+    const res = await authFetch(`/api/items/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
@@ -76,7 +156,7 @@ export const api = {
   },
 
   async deleteItem(id: string): Promise<boolean> {
-    const res = await fetch(`/api/items/${id}`, {
+    const res = await authFetch(`/api/items/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error(`Failed to delete item: ${res.status}`);
@@ -84,7 +164,7 @@ export const api = {
   },
 
   async markAsUsed(id: string, options?: { portion?: number; usedQuantity?: number; usedPortionName?: string }): Promise<InventoryItem> {
-    const res = await fetch(`/api/items/${id}/use`, {
+    const res = await authFetch(`/api/items/${encodeURIComponent(id)}/use`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(options || {}),
@@ -95,7 +175,7 @@ export const api = {
   },
 
   async markAsExpired(id: string): Promise<InventoryItem> {
-    const res = await fetch(`/api/items/${id}/expire`, {
+    const res = await authFetch(`/api/items/${encodeURIComponent(id)}/expire`, {
       method: 'POST',
     });
     if (!res.ok) throw new Error(`Failed to mark expired: ${res.status}`);
@@ -104,7 +184,7 @@ export const api = {
   },
 
   async freezeAndExtendItem(id: string): Promise<InventoryItem> {
-    const res = await fetch(`/api/items/${id}/freeze`, {
+    const res = await authFetch(`/api/items/${encodeURIComponent(id)}/freeze`, {
       method: 'POST',
     });
     if (!res.ok) throw new Error(`Failed to freeze & extend: ${res.status}`);
@@ -113,7 +193,7 @@ export const api = {
   },
 
   async markMultipleAsUsed(ids: string[]): Promise<InventoryItem[]> {
-    const res = await fetch('/api/items/bulk-use', {
+    const res = await authFetch('/api/items/bulk-use', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
@@ -124,7 +204,7 @@ export const api = {
   },
 
   async markMultipleAsExpired(ids: string[]): Promise<InventoryItem[]> {
-    const res = await fetch('/api/items/bulk-expire', {
+    const res = await authFetch('/api/items/bulk-expire', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
@@ -135,7 +215,7 @@ export const api = {
   },
 
   async markMultipleAsFrozen(ids: string[]): Promise<InventoryItem[]> {
-    const res = await fetch('/api/items/bulk-freeze', {
+    const res = await authFetch('/api/items/bulk-freeze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
@@ -146,7 +226,7 @@ export const api = {
   },
 
   async seedDemoData(): Promise<InventoryItem[]> {
-    const res = await fetch('/api/items/seed', {
+    const res = await authFetch('/api/items/seed', {
       method: 'POST',
     });
     if (!res.ok) throw new Error(`Failed to seed demo data: ${res.status}`);
@@ -155,21 +235,21 @@ export const api = {
   },
 
   async clearAllItems(): Promise<boolean> {
-    const res = await fetch('/api/items/clear', {
+    const res = await authFetch('/api/items/clear', {
       method: 'POST',
     });
     return res.ok;
   },
 
   async fetchPreferences(): Promise<UserPreferences> {
-    const res = await fetch('/api/preferences');
+    const res = await authFetch('/api/preferences');
     if (!res.ok) throw new Error(`Failed to fetch preferences: ${res.status}`);
     const data = await res.json();
     return data.preferences;
   },
 
   async updatePreferences(updates: Partial<UserPreferences>): Promise<UserPreferences> {
-    const res = await fetch('/api/preferences', {
+    const res = await authFetch('/api/preferences', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
@@ -180,7 +260,7 @@ export const api = {
   },
 
   async fetchStats(): Promise<InventoryStats> {
-    const res = await fetch('/api/stats');
+    const res = await authFetch('/api/stats');
     if (!res.ok) throw new Error(`Failed to fetch stats: ${res.status}`);
     const data = await res.json();
     return data.stats;
@@ -188,14 +268,14 @@ export const api = {
 
   // Custom User Recipes
   async fetchCustomRecipes(): Promise<CustomRecipe[]> {
-    const res = await fetch('/api/recipes/custom');
+    const res = await authFetch('/api/recipes/custom');
     if (!res.ok) throw new Error(`Failed to fetch custom recipes: ${res.status}`);
     const data = await res.json();
     return data.recipes || [];
   },
 
   async saveCustomRecipe(recipe: Partial<CustomRecipe>): Promise<CustomRecipe> {
-    const res = await fetch('/api/recipes/custom', {
+    const res = await authFetch('/api/recipes/custom', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(recipe),
@@ -206,7 +286,7 @@ export const api = {
   },
 
   async deleteCustomRecipe(id: string): Promise<boolean> {
-    const res = await fetch(`/api/recipes/custom/${id}`, {
+    const res = await authFetch(`/api/recipes/custom/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error(`Failed to delete custom recipe: ${res.status}`);
@@ -217,7 +297,7 @@ export const api = {
     id: string,
     deductions: { itemId: string; portion?: number; usedQuantity?: number; usedPortionName?: string }[]
   ): Promise<{ recipe: CustomRecipe; updatedItems: InventoryItem[] }> {
-    const res = await fetch(`/api/recipes/custom/${id}/cook`, {
+    const res = await authFetch(`/api/recipes/custom/${encodeURIComponent(id)}/cook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deductions }),
@@ -228,14 +308,14 @@ export const api = {
 
   // Restock / Need-to-Buy Procurement List
   async fetchRestockList(): Promise<RestockItem[]> {
-    const res = await fetch('/api/restock');
+    const res = await authFetch('/api/restock');
     if (!res.ok) throw new Error(`Failed to fetch restock list: ${res.status}`);
     const data = await res.json();
     return data.items || [];
   },
 
   async saveRestockItem(item: Partial<RestockItem>): Promise<RestockItem> {
-    const res = await fetch('/api/restock', {
+    const res = await authFetch('/api/restock', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(item),
@@ -246,7 +326,7 @@ export const api = {
   },
 
   async updateRestockItem(id: string, updates: Partial<RestockItem>): Promise<RestockItem> {
-    const res = await fetch(`/api/restock/${id}`, {
+    const res = await authFetch(`/api/restock/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
@@ -257,7 +337,7 @@ export const api = {
   },
 
   async deleteRestockItem(id: string): Promise<boolean> {
-    const res = await fetch(`/api/restock/${id}`, {
+    const res = await authFetch(`/api/restock/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error(`Failed to delete restock item: ${res.status}`);
@@ -265,7 +345,7 @@ export const api = {
   },
 
   async syncNeededRestockItems(): Promise<{ addedCount: number; items: RestockItem[] }> {
-    const res = await fetch('/api/restock/sync', {
+    const res = await authFetch('/api/restock/sync', {
       method: 'POST',
     });
     if (!res.ok) throw new Error(`Failed to sync needed restock items: ${res.status}`);
@@ -276,7 +356,7 @@ export const api = {
     id: string,
     overrides?: StockFromRestockPayload
   ): Promise<{ stockedItem: InventoryItem; restockItem: RestockItem }> {
-    const res = await fetch(`/api/restock/${id}/stock`, {
+    const res = await authFetch(`/api/restock/${encodeURIComponent(id)}/stock`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(overrides || {}),
@@ -288,7 +368,7 @@ export const api = {
   async bulkStockRestockItems(
     ids: string[]
   ): Promise<{ stockedItems: InventoryItem[]; restockItems: RestockItem[] }> {
-    const res = await fetch('/api/restock/bulk-stock', {
+    const res = await authFetch('/api/restock/bulk-stock', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids }),
@@ -299,14 +379,14 @@ export const api = {
 
   // Weekly Meal & Prep Planner
   async fetchMealPlans(): Promise<MealPlanEntry[]> {
-    const res = await fetch('/api/meal-plans');
+    const res = await authFetch('/api/meal-plans');
     if (!res.ok) throw new Error(`Failed to fetch meal plans: ${res.status}`);
     const data = await res.json();
     return data.plans || [];
   },
 
   async saveMealPlan(plan: Partial<MealPlanEntry>): Promise<MealPlanEntry> {
-    const res = await fetch('/api/meal-plans', {
+    const res = await authFetch('/api/meal-plans', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(plan),
@@ -317,7 +397,7 @@ export const api = {
   },
 
   async deleteMealPlan(id: string): Promise<boolean> {
-    const res = await fetch(`/api/meal-plans/${id}`, {
+    const res = await authFetch(`/api/meal-plans/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error(`Failed to delete meal plan: ${res.status}`);
@@ -325,13 +405,13 @@ export const api = {
   },
 
   async clearMealPlans(): Promise<boolean> {
-    const res = await fetch('/api/meal-plans/clear', { method: 'POST' });
+    const res = await authFetch('/api/meal-plans/clear', { method: 'POST' });
     return res.ok;
   },
 
   // Activity Logs
   async fetchActivityLogs(limit = 40): Promise<ActivityLogEntry[]> {
-    const res = await fetch(`/api/activity?limit=${limit}`);
+    const res = await authFetch(`/api/activity?limit=${limit}`);
     if (!res.ok) throw new Error(`Failed to fetch activity logs: ${res.status}`);
     const data = await res.json();
     return data.logs || [];
@@ -339,14 +419,14 @@ export const api = {
 
   // Full JSON Backup & Restore
   async exportBackup(): Promise<any> {
-    const res = await fetch('/api/backup');
+    const res = await authFetch('/api/backup');
     if (!res.ok) throw new Error(`Failed to export backup: ${res.status}`);
     const data = await res.json();
     return data.snapshot;
   },
 
   async restoreBackup(snapshot: any): Promise<any> {
-    const res = await fetch('/api/restore', {
+    const res = await authFetch('/api/restore', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ snapshot }),
@@ -357,14 +437,14 @@ export const api = {
 
   // Suppliers Directory
   async fetchSuppliers(): Promise<Supplier[]> {
-    const res = await fetch('/api/suppliers');
+    const res = await authFetch('/api/suppliers');
     if (!res.ok) throw new Error(`Failed to fetch suppliers: ${res.status}`);
     const data = await res.json();
     return data.suppliers || [];
   },
 
   async saveSupplier(supplier: Partial<Supplier>): Promise<Supplier> {
-    const res = await fetch('/api/suppliers', {
+    const res = await authFetch('/api/suppliers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(supplier),
@@ -375,21 +455,21 @@ export const api = {
   },
 
   async deleteSupplier(id: string): Promise<boolean> {
-    const res = await fetch(`/api/suppliers/${id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/suppliers/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to delete supplier: ${res.status}`);
     return true;
   },
 
   // Storage Temperature & Hygiene Logs
   async fetchStorageLogs(limit = 60): Promise<StorageLog[]> {
-    const res = await fetch(`/api/storage-logs?limit=${limit}`);
+    const res = await authFetch(`/api/storage-logs?limit=${limit}`);
     if (!res.ok) throw new Error(`Failed to fetch storage logs: ${res.status}`);
     const data = await res.json();
     return data.logs || [];
   },
 
   async addStorageLog(entry: Partial<StorageLog>): Promise<StorageLog> {
-    const res = await fetch('/api/storage-logs', {
+    const res = await authFetch('/api/storage-logs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(entry),
@@ -400,7 +480,7 @@ export const api = {
   },
 
   async deleteStorageLog(id: string): Promise<boolean> {
-    const res = await fetch(`/api/storage-logs/${id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/storage-logs/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to delete storage log: ${res.status}`);
     return true;
   },
@@ -410,7 +490,7 @@ export const api = {
     id: string,
     payload: TransferItemPayload
   ): Promise<{ sourceItem: InventoryItem; transferredItem: InventoryItem | null }> {
-    const res = await fetch(`/api/items/${id}/transfer`, {
+    const res = await authFetch(`/api/items/${encodeURIComponent(id)}/transfer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -421,7 +501,7 @@ export const api = {
 
   // Physical Stocktake & Variance Reconciliation
   async reconcileStocktake(entries: StocktakeEntryPayload[]): Promise<StocktakeResult> {
-    const res = await fetch('/api/stocktake', {
+    const res = await authFetch('/api/stocktake', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entries }),
@@ -432,14 +512,14 @@ export const api = {
 
   // Daily Kitchen Checklists & Shift Handover
   async fetchChecklists(): Promise<ChecklistItem[]> {
-    const res = await fetch('/api/checklists');
+    const res = await authFetch('/api/checklists');
     if (!res.ok) throw new Error(`Failed to fetch checklists: ${res.status}`);
     const data = await res.json();
     return data.checklists || [];
   },
 
   async saveChecklistItem(entry: Partial<ChecklistItem>): Promise<ChecklistItem> {
-    const res = await fetch('/api/checklists', {
+    const res = await authFetch('/api/checklists', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(entry),
@@ -450,20 +530,20 @@ export const api = {
   },
 
   async toggleChecklistItem(id: string): Promise<ChecklistItem> {
-    const res = await fetch(`/api/checklists/${id}/toggle`, { method: 'POST' });
+    const res = await authFetch(`/api/checklists/${encodeURIComponent(id)}/toggle`, { method: 'POST' });
     if (!res.ok) throw new Error(`Failed to toggle checklist item: ${res.status}`);
     const data = await res.json();
     return data.item;
   },
 
   async deleteChecklistItem(id: string): Promise<boolean> {
-    const res = await fetch(`/api/checklists/${id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/checklists/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to delete checklist item: ${res.status}`);
     return true;
   },
 
   async resetDailyChecklists(): Promise<ChecklistItem[]> {
-    const res = await fetch('/api/checklists/reset', { method: 'POST' });
+    const res = await authFetch('/api/checklists/reset', { method: 'POST' });
     if (!res.ok) throw new Error(`Failed to reset daily checklists: ${res.status}`);
     const data = await res.json();
     return data.checklists || [];
@@ -471,7 +551,7 @@ export const api = {
 
   // Root-Cause Waste Logs
   async fetchWasteLogs(limit = 100): Promise<WasteLogEntry[]> {
-    const res = await fetch(`/api/waste-logs?limit=${limit}`);
+    const res = await authFetch(`/api/waste-logs?limit=${limit}`);
     if (!res.ok) throw new Error(`Failed to fetch waste logs: ${res.status}`);
     const data = await res.json();
     return data.logs || [];
@@ -480,7 +560,7 @@ export const api = {
   async logWaste(
     payload: LogWastePayload
   ): Promise<{ log: WasteLogEntry; updatedItem: InventoryItem | null }> {
-    const res = await fetch('/api/waste-logs', {
+    const res = await authFetch('/api/waste-logs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -490,21 +570,21 @@ export const api = {
   },
 
   async deleteWasteLog(id: string): Promise<boolean> {
-    const res = await fetch(`/api/waste-logs/${id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/waste-logs/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to delete waste log: ${res.status}`);
     return true;
   },
 
   // Purchase Invoices & Spend Ledger
   async fetchInvoices(limit = 100): Promise<PurchaseInvoice[]> {
-    const res = await fetch(`/api/invoices?limit=${limit}`);
+    const res = await authFetch(`/api/invoices?limit=${limit}`);
     if (!res.ok) throw new Error(`Failed to fetch invoices: ${res.status}`);
     const data = await res.json();
     return data.invoices || [];
   },
 
   async saveInvoice(entry: Partial<PurchaseInvoice>): Promise<PurchaseInvoice> {
-    const res = await fetch('/api/invoices', {
+    const res = await authFetch('/api/invoices', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(entry),
@@ -515,7 +595,7 @@ export const api = {
   },
 
   async updateInvoiceStatus(id: string, paymentStatus: InvoiceStatus): Promise<PurchaseInvoice> {
-    const res = await fetch(`/api/invoices/${id}/status`, {
+    const res = await authFetch(`/api/invoices/${encodeURIComponent(id)}/status`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paymentStatus }),
@@ -526,9 +606,8 @@ export const api = {
   },
 
   async deleteInvoice(id: string): Promise<boolean> {
-    const res = await fetch(`/api/invoices/${id}`, { method: 'DELETE' });
+    const res = await authFetch(`/api/invoices/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`Failed to delete invoice: ${res.status}`);
     return true;
   },
 };
-

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
 FreshTrack Project Archiver
-Packages all application source code, configuration files, backend, and database schema
-into a pristine, ready-to-run ZIP archive, excluding node_modules, dist, and cache files.
+Packages application source code and configuration templates into a clean ZIP archive,
+strictly excluding secrets (.env*), runtime databases (data/, *.db), and build caches.
 """
 
 import os
 import sys
 import zipfile
 from pathlib import Path
+
 
 def create_archive(root_dir, output_zip):
     root_path = Path(root_dir).resolve()
@@ -25,6 +26,9 @@ def create_archive(root_dir, output_zip):
         '.tmp',
         '__pycache__',
         '.cache',
+        'data',
+        '.aistudio',
+        'private',
     }
 
     exclude_files = {
@@ -33,9 +37,28 @@ def create_archive(root_dir, output_zip):
         'freshtrack-complete.zip',
         'package-lock.json',
         'bun.lock',
+        '.env',
+        '.env.local',
+        '.env.production',
+        '.env.development',
+        '.env.test',
     }
 
-    print(f"Creating ZIP archive from: {root_path}")
+    blocked_extensions = (
+        '.zip',
+        '.tmp',
+        '.db',
+        '.db-wal',
+        '.db-shm',
+        '.sqlite',
+        '.sqlite3',
+        '.pem',
+        '.key',
+        '.p12',
+        '.pfx',
+    )
+
+    print(f"Creating sanitized ZIP archive from: {root_path}")
     print(f"Target: {output_path}")
 
     file_count = 0
@@ -47,7 +70,10 @@ def create_archive(root_dir, output_zip):
             for file in files:
                 if file in exclude_files:
                     continue
-                if file.endswith('.zip') or file.endswith('.tmp'):
+                # Exclude any .env* file except .env.example
+                if file.startswith('.env') and file != '.env.example':
+                    continue
+                if file.endswith(blocked_extensions):
                     continue
 
                 full_file_path = Path(root) / file
@@ -61,9 +87,10 @@ def create_archive(root_dir, output_zip):
                 file_count += 1
 
     size_kb = output_path.stat().st_size / 1024
-    print(f"Archive successfully created: {file_count} files, {size_kb:.1f} KB")
+    print(f"Sanitized archive created: {file_count} files, {size_kb:.1f} KB")
+
 
 if __name__ == '__main__':
     root = sys.argv[1] if len(sys.argv) > 1 else '.'
-    output = sys.argv[2] if len(sys.argv) > 2 else 'freshtrack-kitchen-app.zip'
+    output = sys.argv[2] if len(sys.argv) > 2 else '.tmp/freshtrack-kitchen-app.zip'
     create_archive(root, output)

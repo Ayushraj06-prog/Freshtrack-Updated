@@ -1,13 +1,14 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * FreshTrack AI Service
- * Communicates with Gemini 2.5 Flash backend routes with seamless offline fallbacks.
+ * Communicates with authenticated Gemini 2.5 Flash backend routes with offline fallbacks.
  */
 
 import { Recipe, ReceiptParsedItem, DietType } from '../types/inventory';
 import { ReceiptParser } from '../utils/receiptParser';
+import { authFetch } from './authSession';
 
 export interface AiStatus {
   configured: boolean;
@@ -19,7 +20,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 2
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await authFetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }
@@ -28,7 +29,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 2
 export const aiService = {
   async getStatus(): Promise<AiStatus> {
     try {
-      const res = await fetch('/api/ai/status');
+      const res = await authFetch('/api/ai/status');
       if (!res.ok) throw new Error('AI status request failed');
       return await res.json();
     } catch {
@@ -154,5 +155,3 @@ export const aiService = {
     };
   },
 };
-
-

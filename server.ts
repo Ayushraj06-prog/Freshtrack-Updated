@@ -1,9 +1,9 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * FreshTrack Full-Stack Entry Point
- * Runs Express backend with SQLite database and mounts Vite middlewares in dev mode.
+ * Runs hardened Express backend with SQLite database and mounts Vite middlewares in dev mode.
  */
 
 import express from 'express';
@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { apiRouter } from './server/apiRouter.ts';
-import { generateProjectZip } from './server/zipBuilder.ts';
+import { securityHeadersMiddleware } from './server/security.ts';
 
 dotenv.config();
 dotenv.config({ path: '.env.local' });
@@ -26,19 +26,19 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
   const isProd = process.env.NODE_ENV === 'production';
 
-  // Generate initial project zip file in background
-  try {
-    generateProjectZip();
-  } catch (e: any) {
-    console.warn('Initial ZIP prebuild deferred:', e.message);
-  }
+  // Hide Express server fingerprint and trust reverse proxy headers
+  app.disable('x-powered-by');
+  app.set('trust proxy', 1);
 
-  // Mount Backend API
+  // Global security headers (CSP, HSTS, X-Content-Type-Options, Referrer-Policy, Permissions-Policy)
+  app.use(securityHeadersMiddleware);
+
+  // Mount Hardened Backend API
   app.use('/api', apiRouter);
 
-  // Serve public directory
+  // Serve public static assets (dotfiles blocked)
   const publicDir = path.resolve(__dirname, 'public');
-  app.use(express.static(publicDir));
+  app.use(express.static(publicDir, { dotfiles: 'deny', index: false }));
 
   // Development vs Production
   if (!isProd) {
@@ -57,15 +57,27 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.use(express.static(distPath, { dotfiles: 'deny' }));
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
+  // Centralized error handler — never expose stack traces
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({ success: false, error: 'Request payload too large.' });
+    }
+    if (err instanceof SyntaxError && 'body' in err) {
+      return res.status(400).json({ success: false, error: 'Malformed JSON request body.' });
+    }
+    console.error('[FreshTrack][ServerError]', err);
+    return res.status(500).json({ success: false, error: 'An internal server error occurred.' });
+  });
+
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`[FreshTrack] 🚀 Server running at http://0.0.0.0:${PORT}`);
-    console.log(`[FreshTrack] 🗄️ Database: SQLite engine active in data/freshtrack.db`);
+    console.log(`[FreshTrack] Server running at http://0.0.0.0:${PORT}`);
+    console.log(`[FreshTrack] Security middleware & SQLite engine active`);
   });
 }
 
