@@ -34,6 +34,94 @@ interface RecipesViewProps {
   onClearInitialExpiringItem?: () => void;
 }
 
+type AllergenTag = 'Dairy' | 'Nuts' | 'Gluten' | 'Soy' | 'Egg' | 'Seafood';
+
+const ALLERGEN_RULES: { tag: AllergenTag; keywords: string[] }[] = [
+  {
+    tag: 'Dairy',
+    keywords: [
+      'milk',
+      'paneer',
+      'curd',
+      'dahi',
+      'yogurt',
+      'yoghurt',
+      'ghee',
+      'butter',
+      'cream',
+      'malai',
+      'cheese',
+      'khoya',
+      'mawa',
+      'buttermilk',
+      'chaas',
+      'lassi',
+    ],
+  },
+  {
+    tag: 'Nuts',
+    keywords: ['cashew', 'kaju', 'almond', 'badam', 'peanut', 'moongfali', 'walnut', 'pistachio', 'pista', 'hazelnut'],
+  },
+  {
+    tag: 'Gluten',
+    keywords: [
+      'wheat',
+      'atta',
+      'maida',
+      'bread',
+      'roti',
+      'chapati',
+      'paratha',
+      'naan',
+      'pav',
+      'bun',
+      'suji',
+      'sooji',
+      'rava',
+      'semolina',
+      'dalia',
+      'pasta',
+      'noodle',
+      'vermicelli',
+      'seviyan',
+      'flour',
+    ],
+  },
+  {
+    tag: 'Soy',
+    keywords: ['soy', 'soya', 'tofu', 'edamame'],
+  },
+  {
+    tag: 'Egg',
+    keywords: ['egg', 'anda', 'omelette', 'omelet'],
+  },
+  {
+    tag: 'Seafood',
+    keywords: ['fish', 'prawn', 'shrimp', 'crab', 'pomfret', 'rohu', 'salmon', 'surmai', 'seafood'],
+  },
+];
+
+function detectRecipeAllergens(recipe: Recipe): AllergenTag[] {
+  const haystack = [
+    recipe.title,
+    ...recipe.allIngredients.map((i) => i.name),
+    ...recipe.usedExpiringItems,
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  const found: AllergenTag[] = [];
+  for (const rule of ALLERGEN_RULES) {
+    if (rule.keywords.some((kw) => haystack.includes(kw))) {
+      found.push(rule.tag);
+    }
+  }
+  if (recipe.diet === 'egg' && !found.includes('Egg')) {
+    found.push('Egg');
+  }
+  return found;
+}
+
 export const RecipesView: React.FC<RecipesViewProps> = ({
   initialExpiringItem,
   onClearInitialExpiringItem,
@@ -54,8 +142,13 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
   const [recipeTab, setRecipeTab] = useState<'all' | 'expiring' | 'custom' | 'planner'>('all');
   const [batchMultiplier, setBatchMultiplier] = useState<number>(1);
   const [menuPriceInput, setMenuPriceInput] = useState<string>('');
+  const [excludedAllergens, setExcludedAllergens] = useState<AllergenTag[]>([]);
   const [confirmDeleteCustomId, setConfirmDeleteCustomId] = useState<string | null>(null);
   const isCommercial = preferences.operationScale !== 'household';
+
+  const toggleAllergenFilter = (tag: AllergenTag) => {
+    setExcludedAllergens((prev) => (prev.includes(tag) ? prev.filter((a) => a !== tag) : [...prev, tag]));
+  };
 
   // Estimate dish cost (₹) from matched inventory item prices
   const selectedRecipeCosting = useMemo(() => {
@@ -245,8 +338,16 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
       });
     }
 
+    // Filter out excluded allergens
+    if (excludedAllergens.length > 0) {
+      list = list.filter((r) => {
+        const allergens = detectRecipeAllergens(r);
+        return !excludedAllergens.some((ex) => allergens.includes(ex));
+      });
+    }
+
     return list;
-  }, [recipeTab, mappedCustomRecipes, recipesList, dietFilter]);
+  }, [recipeTab, mappedCustomRecipes, recipesList, dietFilter, excludedAllergens]);
 
   // Filter recipes by search query
   const filteredRecipes = useMemo(() => {
@@ -549,6 +650,39 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
         )}
       </div>
 
+      {/* Allergen-Free Quick Filter Bar */}
+      {recipeTab !== 'planner' && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-[11px] font-semibold text-stone-500">Allergen Radar:</span>
+          {(['Dairy', 'Nuts', 'Gluten', 'Soy'] as AllergenTag[]).map((tag) => {
+            const active = excludedAllergens.includes(tag);
+            return (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => toggleAllergenFilter(tag)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                  active
+                    ? 'bg-stone-900 text-[#A3E635]'
+                    : 'bg-white border border-[#E2E8DE] text-stone-600 hover:bg-stone-50'
+                }`}
+              >
+                {active ? `✓ ${tag}-Free` : `${tag}-Free`}
+              </button>
+            );
+          })}
+          {excludedAllergens.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setExcludedAllergens([])}
+              className="text-[11px] font-bold text-[#2C5F2D] hover:underline cursor-pointer"
+            >
+              Clear allergen filter
+            </button>
+          )}
+        </div>
+      )}
+
       {/* 7-Day Meal & Batch Prep Planner OR Recipe Cards Grid */}
       {recipeTab === 'planner' ? (
         <MealPrepPlanner availableRecipes={[...mappedCustomRecipes, ...recipesList]} />
@@ -659,8 +793,8 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
                       {recipe.description}
                     </p>
 
-                    {/* Cooking meta */}
-                    <div className="flex items-center gap-3 text-[11px] text-stone-500 font-medium">
+                    {/* Cooking meta + Inline Allergen Radar */}
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-stone-500 font-medium">
                       <span className="flex items-center gap-1">
                         <Clock className="w-3.5 h-3.5 text-stone-400" />
                         {recipe.timeMinutes} mins
@@ -669,6 +803,21 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
                       <span>{recipe.difficulty}</span>
                       <span>&bull;</span>
                       <span>{recipe.servings} Servings</span>
+                      {(() => {
+                        const allergens = detectRecipeAllergens(recipe);
+                        return (
+                          <>
+                            <span>&bull;</span>
+                            <span
+                              className={
+                                allergens.length > 0 ? 'text-amber-800 font-semibold' : 'text-emerald-700 font-semibold'
+                              }
+                            >
+                              {allergens.length > 0 ? `Contains: ${allergens.join(', ')}` : 'Top-6 Allergen Free'}
+                            </span>
+                          </>
+                        );
+                      })()}
                     </div>
 
                     {/* Expiring items / pantry ingredients highlight */}
@@ -790,7 +939,20 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
             </div>
 
             <div className="p-5 overflow-y-auto space-y-4 text-xs">
-              <p className="text-stone-600 leading-relaxed">{selectedRecipe.description}</p>
+              <div className="space-y-1.5">
+                <p className="text-stone-600 leading-relaxed">{selectedRecipe.description}</p>
+                {(() => {
+                  const allergens = detectRecipeAllergens(selectedRecipe);
+                  return (
+                    <p className="text-[11px] font-semibold text-stone-600">
+                      Allergen Notice:{' '}
+                      <span className={allergens.length > 0 ? 'text-amber-800 font-bold' : 'text-emerald-700 font-bold'}>
+                        {allergens.length > 0 ? allergens.join(' · ') : 'No major Indian/FSSAI allergens detected'}
+                      </span>
+                    </p>
+                  );
+                })()}
+              </div>
 
               {isCommercial && (
                 <div className="p-3 rounded-2xl bg-[#EAF3E6] border border-[#6B9B4F]/40 flex flex-wrap items-center justify-between gap-2">

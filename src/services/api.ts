@@ -22,6 +22,10 @@ import {
   TransferItemPayload,
   StocktakeEntryPayload,
   StocktakeResult,
+  WasteLogEntry,
+  LogWastePayload,
+  PurchaseInvoice,
+  InvoiceStatus,
 } from '../types/inventory';
 
 export const api = {
@@ -464,4 +468,67 @@ export const api = {
     const data = await res.json();
     return data.checklists || [];
   },
+
+  // Root-Cause Waste Logs
+  async fetchWasteLogs(limit = 100): Promise<WasteLogEntry[]> {
+    const res = await fetch(`/api/waste-logs?limit=${limit}`);
+    if (!res.ok) throw new Error(`Failed to fetch waste logs: ${res.status}`);
+    const data = await res.json();
+    return data.logs || [];
+  },
+
+  async logWaste(
+    payload: LogWastePayload
+  ): Promise<{ log: WasteLogEntry; updatedItem: InventoryItem | null }> {
+    const res = await fetch('/api/waste-logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(`Failed to log waste: ${res.status}`);
+    return await res.json();
+  },
+
+  async deleteWasteLog(id: string): Promise<boolean> {
+    const res = await fetch(`/api/waste-logs/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Failed to delete waste log: ${res.status}`);
+    return true;
+  },
+
+  // Purchase Invoices & Spend Ledger
+  async fetchInvoices(limit = 100): Promise<PurchaseInvoice[]> {
+    const res = await fetch(`/api/invoices?limit=${limit}`);
+    if (!res.ok) throw new Error(`Failed to fetch invoices: ${res.status}`);
+    const data = await res.json();
+    return data.invoices || [];
+  },
+
+  async saveInvoice(entry: Partial<PurchaseInvoice>): Promise<PurchaseInvoice> {
+    const res = await fetch('/api/invoices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+    if (!res.ok) throw new Error(`Failed to save invoice: ${res.status}`);
+    const data = await res.json();
+    return data.invoice;
+  },
+
+  async updateInvoiceStatus(id: string, paymentStatus: InvoiceStatus): Promise<PurchaseInvoice> {
+    const res = await fetch(`/api/invoices/${id}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paymentStatus }),
+    });
+    if (!res.ok) throw new Error(`Failed to update invoice status: ${res.status}`);
+    const data = await res.json();
+    return data.invoice;
+  },
+
+  async deleteInvoice(id: string): Promise<boolean> {
+    const res = await fetch(`/api/invoices/${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`Failed to delete invoice: ${res.status}`);
+    return true;
+  },
 };
+

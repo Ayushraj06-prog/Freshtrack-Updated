@@ -292,3 +292,58 @@ export interface StocktakeResult {
   items: InventoryItem[];
   restockList: RestockItem[];
 }
+
+export type WasteReason =
+  | 'expired'
+  | 'overproduction'
+  | 'trim-loss'
+  | 'cold-chain'
+  | 'damaged-delivery'
+  | 'plate-waste'
+  | 'other';
+
+export interface WasteLogEntry {
+  id: string;
+  itemId?: string | null;
+  itemName: string;
+  category: string;
+  quantityWasted: number;
+  unit: string;
+  lossRs: number;
+  reason: WasteReason;
+  loggedBy?: string | null;
+  branchZone?: string | null;
+  notes?: string | null;
+  loggedAt: string;
+}
+
+export interface LogWastePayload {
+  itemId?: string | null;
+  itemName: string;
+  category: string;
+  quantityWasted: number;
+  unit: string;
+  lossRs: number;
+  reason: WasteReason;
+  loggedBy?: string | null;
+  branchZone?: string | null;
+  notes?: string | null;
+}
+
+export type InvoiceStatus = 'paid' | 'pending' | 'overdue';
+
+export interface PurchaseInvoice {
+  id: string;
+  invoiceNumber: string;
+  supplierName: string;
+  invoiceDate: string; // YYYY-MM-DD
+  dueDate?: string | null;
+  amountRs: number;
+  category: string;
+  paymentStatus: InvoiceStatus;
+  itemsCount?: number | null;
+  branchZone?: string | null;
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}

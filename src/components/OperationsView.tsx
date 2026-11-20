@@ -25,10 +25,12 @@ import {
   CheckSquare,
   Square,
   Activity,
+  Receipt,
+  IndianRupee,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { SHELF_LIFE_DATABASE, getRemainingDays } from '../data/shelfLifeData';
-import { ChecklistCategory, StorageZoneType, Supplier } from '../types/inventory';
+import { ChecklistCategory, InvoiceStatus, StorageZoneType, Supplier } from '../types/inventory';
 
 const INDIAN_STORAGE_TIPS: Record<string, string> = {
   Dairy: 'Store Paneer submerged in fresh drinking water inside an airtight box and change water every 2 days to double freshness. Keep milk on middle shelf, not the warm fridge door.',
@@ -64,6 +66,7 @@ export const OperationsView: React.FC<OperationsViewProps> = ({ onOpenStocktake 
     suppliers,
     storageLogs,
     checklists,
+    invoices,
     preferences,
     saveSupplier,
     deleteSupplier,
@@ -73,12 +76,28 @@ export const OperationsView: React.FC<OperationsViewProps> = ({ onOpenStocktake 
     toggleChecklistItem,
     deleteChecklistItem,
     resetDailyChecklists,
+    saveInvoice,
+    updateInvoiceStatus,
+    deleteInvoice,
     addToRestockList,
   } = useInventory();
 
   const isCommercial = preferences.operationScale !== 'household';
-  const [subTab, setSubTab] = useState<'suppliers' | 'temperature' | 'checklists' | 'guide'>('suppliers');
+  const [subTab, setSubTab] = useState<'suppliers' | 'temperature' | 'checklists' | 'invoices' | 'guide'>('suppliers');
   const [toast, setToast] = useState<string | null>(null);
+
+  // Invoice / GRN Spend Ledger state
+  const todayIso = new Date().toISOString().split('T')[0];
+  const [invNumber, setInvNumber] = useState('');
+  const [invSupplier, setInvSupplier] = useState('');
+  const [invDate, setInvDate] = useState(todayIso);
+  const [invDueDate, setInvDueDate] = useState('');
+  const [invAmount, setInvAmount] = useState('');
+  const [invCategory, setInvCategory] = useState('Mixed Groceries');
+  const [invStatus, setInvStatus] = useState<InvoiceStatus>('paid');
+  const [invItemsCount, setInvItemsCount] = useState('');
+  const [invNotes, setInvNotes] = useState('');
+  const [invFilter, setInvFilter] = useState<'all' | InvoiceStatus>('all');
 
   // Checklist & Handover form state
   const [chkTitle, setChkTitle] = useState('');
@@ -344,6 +363,93 @@ export const OperationsView: React.FC<OperationsViewProps> = ({ onOpenStocktake 
     showToast(chkCategory === 'handover' ? 'Posted shift handover note!' : 'Added checklist item!');
   };
 
+  // Monthly Spend & Payables Analytics
+  const invoiceSummary = useMemo(() => {
+    const now = new Date();
+    const currYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    let monthlySpendRs = 0;
+    let totalSpendRs = 0;
+    let pendingPayablesRs = 0;
+    let pendingCount = 0;
+
+    for (const inv of invoices) {
+      const amt = Number(inv.amountRs) || 0;
+      totalSpendRs += amt;
+      if ((inv.invoiceDate || '').startsWith(currYearMonth)) {
+        monthlySpendRs += amt;
+      }
+      if (inv.paymentStatus === 'pending' || inv.paymentStatus === 'overdue') {
+        pendingPayablesRs += amt;
+        pendingCount += 1;
+      }
+    }
+    return { monthlySpendRs, totalSpendRs, pendingPayablesRs, pendingCount };
+  }, [invoices]);
+
+  const filteredInvoices = useMemo(() => {
+    if (invFilter === 'all') return invoices;
+    return invoices.filter((inv) => inv.paymentStatus === invFilter);
+  }, [invoices, invFilter]);
+
+  const handleSaveInvoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const numericAmt = Number(invAmount);
+    if (!invSupplier.trim() || isNaN(numericAmt) || numericAmt <= 0) return;
+    const saved = await saveInvoice({
+      invoiceNumber: invNumber.trim() || `GRN-${Date.now().toString().slice(-5)}`,
+      supplierName: invSupplier.trim(),
+      invoiceDate: invDate || todayIso,
+      dueDate: invDueDate || null,
+      amountRs: numericAmt,
+      category: invCategory,
+      paymentStatus: invStatus,
+      itemsCount: invItemsCount ? Number(invItemsCount) : null,
+      branchZone: preferences.branchLocation || null,
+      notes: invNotes.trim() || null,
+    });
+    showToast(`Recorded invoice ${saved.invoiceNumber} — ₹${saved.amountRs.toLocaleString('en-IN')}`);
+    setInvNumber('');
+    setInvAmount('');
+    setInvDueDate('');
+    setInvItemsCount('');
+    setInvNotes('');
+  };
+
+  const handleExportInvoicesCsv = () => {
+    if (invoices.length === 0) return;
+    const headers = [
+      'Invoice Number',
+      'Supplier',
+      'Invoice Date',
+      'Due Date',
+      'Amount (INR)',
+      'Category',
+      'Payment Status',
+      'Items Count',
+      'Branch',
+      'Notes',
+    ];
+    const rows = invoices.map((inv) => [
+      `"${inv.invoiceNumber.replace(/"/g, '""')}"`,
+      `"${inv.supplierName.replace(/"/g, '""')}"`,
+      inv.invoiceDate,
+      inv.dueDate || '',
+      inv.amountRs,
+      `"${inv.category.replace(/"/g, '""')}"`,
+      inv.paymentStatus.toUpperCase(),
+      inv.itemsCount ?? '',
+      `"${(inv.branchZone || '').replace(/"/g, '""')}"`,
+      `"${(inv.notes || '').replace(/"/g, '""')}"`,
+    ]);
+    const csv = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const link = document.createElement('a');
+    link.href = encodeURI(csv);
+    link.download = `freshtrack_spend_invoices_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="space-y-5 pb-24">
       {/* Header & Sub-Navigation */}
@@ -387,6 +493,16 @@ export const OperationsView: React.FC<OperationsViewProps> = ({ onOpenStocktake 
           >
             <ClipboardCheck className="w-3.5 h-3.5" />
             <span>SOP &amp; Forecast</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSubTab('invoices')}
+            className={`px-3 py-2 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+              subTab === 'invoices' ? 'bg-white text-[#2C5F2D] shadow-xs' : 'text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            <Receipt className="w-3.5 h-3.5" />
+            <span>Spend &amp; Invoices</span>
           </button>
           <button
             type="button"
@@ -1210,6 +1326,313 @@ export const OperationsView: React.FC<OperationsViewProps> = ({ onOpenStocktake 
                 </p>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: MONTHLY SPEND BUDGET & VENDOR GRN / INVOICE LEDGER */}
+      {subTab === 'invoices' && (
+        <div className="space-y-5">
+          {/* Spend Summary KPI Strip */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+            <div className="bg-white border border-[#E2E8DE] rounded-2xl p-4">
+              <span className="text-stone-500 font-semibold block">This Month&apos;s Spend</span>
+              <span className="text-2xl font-extrabold text-[#2C5F2D] tabular-nums mt-1 block">
+                ₹{invoiceSummary.monthlySpendRs.toLocaleString('en-IN')}
+              </span>
+              <span className="text-[11px] text-stone-500 tabular-nums">
+                Lifetime logged: ₹{invoiceSummary.totalSpendRs.toLocaleString('en-IN')} across {invoices.length} bill{invoices.length === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            <div className="bg-white border border-[#E2E8DE] rounded-2xl p-4">
+              <span className="text-stone-500 font-semibold block">Pending &amp; Overdue Payables</span>
+              <span
+                className={`text-2xl font-extrabold tabular-nums mt-1 block ${
+                  invoiceSummary.pendingPayablesRs > 0 ? 'text-amber-700' : 'text-emerald-700'
+                }`}
+              >
+                ₹{invoiceSummary.pendingPayablesRs.toLocaleString('en-IN')}
+              </span>
+              <span className="text-[11px] text-stone-500 tabular-nums">
+                {invoiceSummary.pendingCount} unpaid vendor invoice{invoiceSummary.pendingCount === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            <div className="bg-white border border-[#E2E8DE] rounded-2xl p-4 flex flex-col justify-between">
+              <div>
+                <span className="text-stone-500 font-semibold block">Spend &amp; GST Ledger Export</span>
+                <span className="text-[11px] text-stone-500">Download full invoice register for accounts</span>
+              </div>
+              <button
+                type="button"
+                disabled={invoices.length === 0}
+                onClick={handleExportInvoicesCsv}
+                className="mt-2 py-2 px-3 rounded-xl bg-[#EAF3E6] hover:bg-[#d8ebd1] disabled:opacity-50 text-[#2C5F2D] font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Export Spend CSV</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Log New Invoice / GRN Form */}
+          <form
+            onSubmit={handleSaveInvoice}
+            className="bg-white border border-[#E2E8DE] rounded-3xl p-5 space-y-3 text-xs"
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-stone-100">
+              <div className="flex items-center gap-2">
+                <IndianRupee className="w-4 h-4 text-[#2C5F2D]" />
+                <h3 className="font-extrabold text-sm text-stone-900">
+                  {isCommercial ? 'Log Vendor Invoice / GRN Bill' : 'Log Grocery Bill / Monthly Spend'}
+                </h3>
+              </div>
+              <span className="text-[11px] text-stone-500">Saved locally in SQLite ledger</span>
+            </div>
+
+            <datalist id="invoice-vendor-list">
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.name} />
+              ))}
+              {discoveredSupplierNames.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
+              <div>
+                <label className="font-bold text-stone-700 block mb-1">Invoice / GRN #</label>
+                <input
+                  type="text"
+                  value={invNumber}
+                  onChange={(e) => setInvNumber(e.target.value)}
+                  placeholder="Auto e.g. GRN-1042"
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl font-mono"
+                />
+              </div>
+
+              <div className="lg:col-span-2">
+                <label className="font-bold text-stone-700 block mb-1">Supplier / Store *</label>
+                <input
+                  type="text"
+                  required
+                  list="invoice-vendor-list"
+                  value={invSupplier}
+                  onChange={(e) => setInvSupplier(e.target.value)}
+                  placeholder="e.g. Hyperpure / Local Mandi / DMart"
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-stone-700 block mb-1">Amount (₹) *</label>
+                <input
+                  type="number"
+                  required
+                  min="1"
+                  step="any"
+                  value={invAmount}
+                  onChange={(e) => setInvAmount(e.target.value)}
+                  placeholder="e.g. 4250"
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl font-bold tabular-nums"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-stone-700 block mb-1">Bill Date</label>
+                <input
+                  type="date"
+                  value={invDate}
+                  onChange={(e) => setInvDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl tabular-nums"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-stone-700 block mb-1">Payment Status</label>
+                <select
+                  value={invStatus}
+                  onChange={(e) => setInvStatus(e.target.value as InvoiceStatus)}
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl font-semibold"
+                >
+                  <option value="paid">Paid</option>
+                  <option value="pending">Pending Credit</option>
+                  <option value="overdue">Overdue</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+              <div className="sm:col-span-3">
+                <label className="font-bold text-stone-700 block mb-1">Category</label>
+                <select
+                  value={invCategory}
+                  onChange={(e) => setInvCategory(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl"
+                >
+                  <option value="Mixed Groceries">Mixed Groceries</option>
+                  <option value="Fresh Produce">Fresh Produce</option>
+                  <option value="Dairy & Eggs">Dairy &amp; Eggs</option>
+                  <option value="Meat & Poultry">Meat &amp; Poultry</option>
+                  <option value="Dry Staples & Grains">Dry Staples &amp; Grains</option>
+                  <option value="Packaging & Consumables">Packaging &amp; Consumables</option>
+                </select>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="font-bold text-stone-700 block mb-1">Due Date</label>
+                <input
+                  type="date"
+                  value={invDueDate}
+                  onChange={(e) => setInvDueDate(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl tabular-nums"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="font-bold text-stone-700 block mb-1">Line Items</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={invItemsCount}
+                  onChange={(e) => setInvItemsCount(e.target.value)}
+                  placeholder="Optional"
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl tabular-nums"
+                />
+              </div>
+
+              <div className="sm:col-span-3">
+                <label className="font-bold text-stone-700 block mb-1">Notes / GST Ref</label>
+                <input
+                  type="text"
+                  value={invNotes}
+                  onChange={(e) => setInvNotes(e.target.value)}
+                  placeholder="e.g. Paid via UPI / Net 15"
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl"
+                />
+              </div>
+
+              <div className="sm:col-span-2 flex items-end">
+                <button
+                  type="submit"
+                  className="w-full py-2 px-3 rounded-xl bg-[#2C5F2D] hover:bg-[#204721] text-white font-bold flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Save Bill</span>
+                </button>
+              </div>
+            </div>
+          </form>
+
+          {/* Invoices Register */}
+          <div className="bg-white border border-[#E2E8DE] rounded-3xl p-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-stone-100">
+              <h3 className="font-extrabold text-sm text-stone-900">
+                Purchase Invoice &amp; GRN Register ({filteredInvoices.length})
+              </h3>
+              <div className="flex items-center gap-1 p-1 bg-stone-100 rounded-lg text-xs font-bold">
+                {(['all', 'pending', 'overdue', 'paid'] as const).map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => setInvFilter(st)}
+                    className={`px-2.5 py-1 rounded-md capitalize cursor-pointer transition-colors ${
+                      invFilter === st ? 'bg-white text-[#2C5F2D] shadow-2xs' : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {filteredInvoices.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-stone-200 text-[11px] text-stone-500">
+                      <th className="py-2 pr-3 font-bold">Invoice / Supplier</th>
+                      <th className="py-2 px-3 font-bold">Category &amp; Date</th>
+                      <th className="py-2 px-3 font-bold text-right">Amount</th>
+                      <th className="py-2 px-3 font-bold">Status</th>
+                      <th className="py-2 pl-3 font-bold text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100 tabular-nums">
+                    {filteredInvoices.map((inv) => {
+                      const isPaid = inv.paymentStatus === 'paid';
+                      return (
+                        <tr key={inv.id} className="hover:bg-stone-50">
+                          <td className="py-2.5 pr-3">
+                            <p className="font-extrabold text-stone-900">{inv.supplierName}</p>
+                            <p className="text-[11px] text-stone-500 font-mono">
+                              {inv.invoiceNumber}
+                              {inv.itemsCount ? ` · ${inv.itemsCount} SKUs` : ''}
+                              {inv.notes ? ` · ${inv.notes}` : ''}
+                            </p>
+                          </td>
+                          <td className="py-2.5 px-3 text-stone-600">
+                            <span className="font-semibold text-stone-800 block">{inv.category}</span>
+                            <span className="text-[11px] text-stone-500">
+                              {inv.invoiceDate}
+                              {inv.dueDate ? ` · Due ${inv.dueDate}` : ''}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-extrabold text-stone-900">
+                            ₹{inv.amountRs.toLocaleString('en-IN')}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={`text-[11px] font-extrabold uppercase ${
+                                inv.paymentStatus === 'paid'
+                                  ? 'text-emerald-700'
+                                  : inv.paymentStatus === 'overdue'
+                                  ? 'text-rose-700'
+                                  : 'text-amber-700'
+                              }`}
+                            >
+                              {inv.paymentStatus}
+                            </span>
+                          </td>
+                          <td className="py-2.5 pl-3 text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  const next: InvoiceStatus = isPaid ? 'pending' : 'paid';
+                                  await updateInvoiceStatus(inv.id, next);
+                                  showToast(`Marked ${inv.invoiceNumber} as ${next.toUpperCase()}.`);
+                                }}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${
+                                  isPaid
+                                    ? 'bg-stone-100 hover:bg-stone-200 text-stone-700'
+                                    : 'bg-[#EAF3E6] hover:bg-[#d8ebd1] text-[#2C5F2D]'
+                                }`}
+                              >
+                                {isPaid ? 'Mark Unpaid' : 'Mark Paid'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteInvoice(inv.id)}
+                                className="p-1 text-stone-400 hover:text-rose-600 cursor-pointer"
+                                aria-label={`Delete invoice ${inv.invoiceNumber}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="py-8 text-center text-xs text-stone-500">
+                No vendor invoices logged yet. Record your weekly mandi, kirana, or wholesale supplier bills above to monitor monthly spend and payables.
+              </p>
+            )}
           </div>
         </div>
       )}

@@ -23,11 +23,14 @@ import {
   History,
   Leaf,
   Droplets,
+  CalendarPlus,
+  TrendingDown,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays } from '../data/shelfLifeData';
-import { InventoryItem } from '../types/inventory';
+import { InventoryItem, WasteReason } from '../types/inventory';
 import { UseItemModal } from './UseItemModal';
+import { exportExpiryCalendarIcs } from '../utils/icsExport';
 
 interface DashboardViewProps {
   setActiveTab: (tab: string) => void;
@@ -42,11 +45,37 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenScaleModal,
   onOpenRestockList,
 }) => {
-  const { items, restockList, activityLogs, addToRestockList, stats, markAsUsed, dbInfo, preferences, exportCsv } =
+  const { items, restockList, activityLogs, wasteLogs, addToRestockList, stats, markAsUsed, dbInfo, preferences, exportCsv } =
     useInventory();
   const [usingItem, setUsingItem] = useState<InventoryItem | null>(null);
+  const [icsNotice, setIcsNotice] = useState<string | null>(null);
   const pendingBuyNames = new Set(restockList.filter((r) => r.status === 'pending').map((r) => r.name.toLowerCase()));
   const pendingBuyCount = restockList.filter((r) => r.status === 'pending').length;
+
+  const WASTE_REASON_LABELS: Record<WasteReason, string> = {
+    expired: 'Expired / Spoiled',
+    overproduction: 'Overproduction',
+    'trim-loss': 'Trim / Prep Loss',
+    'cold-chain': 'Cold-Chain Issue',
+    'damaged-delivery': 'Damaged Delivery',
+    'plate-waste': 'Plate Waste',
+    other: 'Other Loss',
+  };
+
+  const wasteByReason = Object.values(
+    wasteLogs.reduce((acc, log) => {
+      const r = log.reason || 'other';
+      if (!acc[r]) {
+        acc[r] = { reason: r, label: WASTE_REASON_LABELS[r] || r, totalLossRs: 0, incidents: 0 };
+      }
+      acc[r].totalLossRs += Number(log.lossRs) || 0;
+      acc[r].incidents += 1;
+      return acc;
+    }, {} as Record<string, { reason: string; label: string; totalLossRs: number; incidents: number }>)
+  ).sort((a, b) => b.totalLossRs - a.totalLossRs || b.incidents - a.incidents);
+
+  const totalStructuredWasteRs = wasteByReason.reduce((s, r) => s + r.totalLossRs, 0);
+  const maxReasonLoss = Math.max(1, ...wasteByReason.map((r) => r.totalLossRs));
 
   const scale = preferences.operationScale || 'household';
   const isCommercial = scale !== 'household';
@@ -312,13 +341,37 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 Active stock urgency timeline across {activeItems.length} tracked item{activeItems.length === 1 ? '' : 's'}
               </p>
             </div>
-            <button
-              onClick={() => setActiveTab('inventory')}
-              className="text-xs font-bold text-[#2C5F2D] hover:underline cursor-pointer shrink-0"
-            >
-              Inspect FIFO &rarr;
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  const count = exportExpiryCalendarIcs(items);
+                  setIcsNotice(
+                    count > 0
+                      ? `Downloaded .ics calendar file with ${count} upcoming expiry alert${count === 1 ? '' : 's'}.`
+                      : 'No active items expiring in the next 14 days.'
+                  );
+                  setTimeout(() => setIcsNotice(null), 4000);
+                }}
+                className="px-2.5 py-1.5 rounded-xl bg-[#EAF3E6] hover:bg-[#d8ebd1] text-[#2C5F2D] text-[11px] font-bold flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                title="Download .ics calendar reminders for Google, Apple & Outlook Calendar"
+              >
+                <CalendarPlus className="w-3.5 h-3.5" />
+                <span>Export .ics</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('inventory')}
+                className="text-xs font-bold text-[#2C5F2D] hover:underline cursor-pointer shrink-0"
+              >
+                Inspect FIFO &rarr;
+              </button>
+            </div>
           </div>
+          {icsNotice && (
+            <p className="text-[11px] font-bold text-[#2C5F2D] bg-[#EAF3E6] px-3 py-1.5 rounded-xl">
+              {icsNotice}
+            </p>
+          )}
 
           {activeItems.length > 0 ? (
             <>
@@ -433,6 +486,104 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Waste Root-Cause & Financial Leakage Analytics */}
+      <div className="bg-white border border-[#E2E8DE] rounded-3xl p-5 shadow-xs space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-stone-100">
+          <div>
+            <div className="flex items-center gap-2">
+              <TrendingDown className="w-4 h-4 text-rose-600" />
+              <h3 className="font-extrabold text-sm text-stone-900">
+                Waste Root-Cause &amp; Financial Leakage Breakdown
+              </h3>
+            </div>
+            <p className="text-[11px] text-stone-500 mt-0.5 tabular-nums">
+              {wasteLogs.length > 0
+                ? `${wasteLogs.length} structured waste event${wasteLogs.length === 1 ? '' : 's'} · ₹${totalStructuredWasteRs.toLocaleString('en-IN')} attributed leakage`
+                : 'Log spoiled or trimmed stock from Inventory to pinpoint exactly where kitchen ₹ leaks.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('inventory')}
+            className="text-xs font-bold text-[#2C5F2D] hover:underline cursor-pointer"
+          >
+            Log from Inventory &rarr;
+          </button>
+        </div>
+
+        {wasteByReason.length > 0 ? (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <div className="lg:col-span-7 space-y-2.5">
+              {wasteByReason.map((row) => {
+                const sharePct =
+                  totalStructuredWasteRs > 0
+                    ? Math.round((row.totalLossRs / totalStructuredWasteRs) * 100)
+                    : Math.round((row.incidents / Math.max(1, wasteLogs.length)) * 100);
+                return (
+                  <div key={row.reason} className="space-y-1 text-xs">
+                    <div className="flex items-center justify-between gap-2 tabular-nums">
+                      <span className="font-bold text-stone-800">
+                        {row.label}{' '}
+                        <span className="text-[11px] font-normal text-stone-500">
+                          · {row.incidents} event{row.incidents === 1 ? '' : 's'}
+                        </span>
+                      </span>
+                      <span className="font-extrabold text-rose-700">
+                        ₹{row.totalLossRs.toLocaleString('en-IN')}{' '}
+                        <span className="text-[11px] font-semibold text-stone-500">({sharePct}%)</span>
+                      </span>
+                    </div>
+                    <div className="h-2 w-full bg-stone-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-rose-500 rounded-full transition-all"
+                        style={{
+                          width: `${Math.max(
+                            6,
+                            Math.round(
+                              (row.totalLossRs > 0 ? row.totalLossRs / maxReasonLoss : row.incidents / wasteLogs.length) *
+                                100
+                            )
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="lg:col-span-5 divide-y divide-stone-100 border-t lg:border-t-0 lg:border-l border-stone-100 pt-3 lg:pt-0 lg:pl-4">
+              <p className="text-[11px] font-bold text-stone-500 pb-2">Recent Attributed Losses</p>
+              {wasteLogs.slice(0, 4).map((w) => (
+                <div key={w.id} className="py-2 flex items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0">
+                    <p className="font-bold text-stone-900 truncate">{w.itemName}</p>
+                    <p className="text-[11px] text-stone-500 truncate">
+                      {WASTE_REASON_LABELS[w.reason] || w.reason} · {w.quantityWasted} {w.unit}
+                      {w.loggedBy ? ` · ${w.loggedBy}` : ''}
+                    </p>
+                  </div>
+                  <span className="font-extrabold text-rose-700 tabular-nums shrink-0">
+                    -₹{w.lossRs.toLocaleString('en-IN')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="py-4 px-3 rounded-2xl bg-[#F7F8F4] border border-[#E2E8DE] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <span className="text-stone-600">
+              No root-cause waste events recorded yet. Click <strong>Spoiled</strong> on any active item in Inventory to attribute partial or full losses (Expired, Overproduction, Trim Loss, Cold-Chain, Damaged Delivery).
+            </span>
+            {stats.moneyWastedRs > 0 && (
+              <span className="font-bold text-rose-700 tabular-nums shrink-0">
+                Historical expired: ₹{stats.moneyWastedRs.toLocaleString('en-IN')}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Commercial Waste Budget Cap & FSSAI Compliance Bar (Restaurant & Enterprise) */}

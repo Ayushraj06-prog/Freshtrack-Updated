@@ -28,6 +28,7 @@ import {
   Printer,
   ClipboardCheck,
   ArrowLeftRight,
+  CalendarPlus,
 } from 'lucide-react';
 import { useInventory } from '../context/InventoryContext';
 import { getRemainingDays, SHELF_LIFE_DATABASE } from '../data/shelfLifeData';
@@ -36,6 +37,9 @@ import { UseItemModal } from './UseItemModal';
 import { CustomRecipeModal } from './CustomRecipeModal';
 import { CompletedAndBuyPanel } from './CompletedAndBuyPanel';
 import { TransferStockModal } from './TransferStockModal';
+import { LogWasteModal } from './LogWasteModal';
+import { QuickLeftoverModal } from './QuickLeftoverModal';
+import { exportExpiryCalendarIcs } from '../utils/icsExport';
 
 interface InventoryViewProps {
   onOpenAddModal: () => void;
@@ -106,9 +110,21 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
   const [usingItem, setUsingItem] = useState<InventoryItem | null>(null);
+  const [wastingItem, setWastingItem] = useState<InventoryItem | null>(null);
   const [transferringItem, setTransferringItem] = useState<InventoryItem | null>(null);
+  const [isLeftoverModalOpen, setIsLeftoverModalOpen] = useState(false);
   const [isCustomRecipeOpen, setIsCustomRecipeOpen] = useState(false);
   const [customRecipeItemId, setCustomRecipeItemId] = useState<string | null>(null);
+
+  const handleExportIcs = () => {
+    const count = exportExpiryCalendarIcs(items);
+    if (count > 0) {
+      setQueuedNotice(`Exported ${count} upcoming expiry alert${count === 1 ? '' : 's'} to .ics calendar file!`);
+    } else {
+      setQueuedNotice('No active items expiring within the next 14 days to export.');
+    }
+    setTimeout(() => setQueuedNotice(null), 4500);
+  };
 
   const availableZones = useMemo(() => {
     const zones = new Set<string>();
@@ -223,6 +239,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           </button>
 
           <button
+            onClick={() => setIsLeftoverModalOpen(true)}
+            className="px-3.5 py-2.5 bg-white hover:bg-stone-50 text-stone-800 border border-[#E2E8DE] text-xs font-bold rounded-2xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+          >
+            <Clock className="w-4 h-4 text-[#2C5F2D]" />
+            <span>{isCommercial ? 'Prep Batch Timer' : 'Log Leftover'}</span>
+          </button>
+
+          <button
             onClick={() => {
               setCustomRecipeItemId(null);
               setIsCustomRecipeOpen(true);
@@ -334,6 +358,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             )}
             <button
               type="button"
+              onClick={handleExportIcs}
+              className="px-3 py-1.5 rounded-xl bg-white hover:bg-stone-50 text-stone-800 border border-[#E2E8DE] font-bold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              title="Export 14-day expiry reminders to Google, Apple, or Outlook Calendar"
+            >
+              <CalendarPlus className="w-3.5 h-3.5 text-[#2C5F2D]" />
+              <span>Calendar (.ics)</span>
+            </button>
+            <button
+              type="button"
               onClick={exportCsv}
               className="px-3 py-1.5 rounded-xl bg-[#EAF3E6] hover:bg-[#d8ebd1] text-[#2C5F2D] font-bold flex items-center gap-1.5 cursor-pointer"
             >
@@ -410,6 +443,17 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
               >
                 <ClipboardCheck className="w-3.5 h-3.5 text-[#2C5F2D]" />
                 <span>Stocktake</span>
+              </button>
+            )}
+            {!isCommercial && (
+              <button
+                type="button"
+                onClick={handleExportIcs}
+                className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-white border border-[#E2E8DE] text-stone-700 hover:bg-stone-50 flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                title="Export 14-day expiry reminders to Calendar (.ics)"
+              >
+                <CalendarPlus className="w-3.5 h-3.5 text-[#2C5F2D]" />
+                <span>Calendar</span>
               </button>
             )}
             {!isCommercial && onOpenLabelPrinter && (
@@ -832,13 +876,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
                     {item.status === 'active' && (
                       <button
-                        onClick={async () => {
-                          await markAsExpired(item.id);
-                          setQueuedNotice(`Logged "${item.name}" as Spoiled in waste analytics.`);
-                          setTimeout(() => setQueuedNotice(null), 4000);
-                        }}
+                        onClick={() => setWastingItem(item)}
                         className="px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
-                        title="Mark Spoiled / Expired"
+                        title="Log Spoiled / Root-Cause Waste"
                       >
                         <XCircle className="w-3 h-3" />
                         <span>Spoiled</span>
@@ -1120,6 +1160,29 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           }}
         />
       )}
+
+      {/* Root-Cause Waste Log Modal */}
+      {wastingItem && (
+        <LogWasteModal
+          item={wastingItem}
+          onClose={() => setWastingItem(null)}
+          onSuccess={(msg) => {
+            setQueuedNotice(msg);
+            setTimeout(() => setQueuedNotice(null), 5000);
+          }}
+        />
+      )}
+
+      {/* 1-Click Cooked Leftovers & Prep Batch Timer Modal */}
+      <QuickLeftoverModal
+        isOpen={isLeftoverModalOpen}
+        onClose={() => setIsLeftoverModalOpen(false)}
+        onSaved={(_id, name) => {
+          setQueuedNotice(`Started Use-By timer for "${name}" in Cooked Leftovers.`);
+          setTimeout(() => setQueuedNotice(null), 4500);
+        }}
+        onPrintLabel={onOpenLabelPrinter ? (id) => onOpenLabelPrinter([id]) : undefined}
+      />
 
       {/* Standalone Custom Recipe Creator Modal */}
       <CustomRecipeModal

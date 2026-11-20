@@ -180,6 +180,37 @@ sqliteDb.exec(`
     createdAt TEXT,
     updatedAt TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS waste_logs (
+    id TEXT PRIMARY KEY,
+    itemId TEXT,
+    itemName TEXT NOT NULL,
+    category TEXT NOT NULL,
+    quantityWasted REAL NOT NULL,
+    unit TEXT NOT NULL,
+    lossRs REAL DEFAULT 0,
+    reason TEXT NOT NULL,
+    loggedBy TEXT,
+    branchZone TEXT,
+    notes TEXT,
+    loggedAt TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS invoices (
+    id TEXT PRIMARY KEY,
+    invoiceNumber TEXT NOT NULL,
+    supplierName TEXT NOT NULL,
+    invoiceDate TEXT NOT NULL,
+    dueDate TEXT,
+    amountRs REAL NOT NULL,
+    category TEXT NOT NULL,
+    paymentStatus TEXT DEFAULT 'paid',
+    itemsCount INTEGER,
+    branchZone TEXT,
+    notes TEXT,
+    createdAt TEXT,
+    updatedAt TEXT
+  );
 `);
 
 // Seed default daily kitchen checks if checklists table is empty
@@ -1658,10 +1689,168 @@ export const db = {
     return this.getChecklists();
   },
 
+  // ---------------- Root-Cause Waste Logs ----------------
+  getWasteLogs(limit = 100) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
+    const rows = sqliteDb
+      .prepare('SELECT * FROM waste_logs ORDER BY loggedAt DESC LIMIT ?')
+      .all(safeLimit) as any[];
+    return rows.map(mapWasteLog);
+  },
+
+  logWaste(entry: any) {
+    const nowIso = new Date().toISOString();
+    const qtyWasted = Math.max(0.01, Number(entry.quantityWasted) || 1);
+    let lossRs = Number(entry.lossRs);
+    if (isNaN(lossRs) || lossRs < 0) lossRs = 0;
+
+    let updatedItem: any = null;
+    if (entry.itemId) {
+      const existing = this.getItemById(entry.itemId);
+      if (existing && existing.status === 'active') {
+        const currQty = Number(existing.quantity) || 0;
+        const origQty = Number(existing.originalQuantity || currQty || 1);
+        const actualDeduct = Math.min(currQty, qtyWasted);
+        if (lossRs === 0 && existing.price !== null && origQty > 0) {
+          lossRs = Math.round((existing.price / origQty) * actualDeduct);
+        }
+
+        const remainingQty = Number(Math.max(0, currQty - actualDeduct).toFixed(2));
+        const reasonLabel = String(entry.reason || 'expired');
+        const wasteNote = `Waste (${reasonLabel}): ${actualDeduct} ${existing.unit} (₹${lossRs} loss)`;
+        const mergedNotes = existing.notes ? `${existing.notes} • ${wasteNote}` : wasteNote;
+
+        if (remainingQty <= 0.001) {
+          updatedItem = this.updateItem(existing.id, {
+            quantity: 0,
+            status: 'expired',
+            notes: mergedNotes,
+          });
+        } else {
+          const remainPrice =
+            existing.price !== null ? Math.max(0, existing.price - lossRs) : null;
+          updatedItem = this.updateItem(existing.id, {
+            quantity: remainingQty,
+            price: remainPrice,
+            notes: mergedNotes,
+          });
+        }
+      }
+    }
+
+    const prepared = {
+      id: entry.id || `waste-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      itemId: entry.itemId ?? null,
+      itemName: String(entry.itemName || 'Kitchen Item').trim(),
+      category: entry.category || 'Other',
+      quantityWasted: qtyWasted,
+      unit: entry.unit || 'unit',
+      lossRs: Math.round(lossRs),
+      reason: entry.reason || 'expired',
+      loggedBy: entry.loggedBy ?? null,
+      branchZone: entry.branchZone ?? null,
+      notes: entry.notes ?? null,
+      loggedAt: entry.loggedAt || nowIso,
+    };
+
+    sqliteDb
+      .prepare(
+        `
+      INSERT OR REPLACE INTO waste_logs (
+        id, itemId, itemName, category, quantityWasted, unit, lossRs, reason, loggedBy, branchZone, notes, loggedAt
+      ) VALUES (
+        @id, @itemId, @itemName, @category, @quantityWasted, @unit, @lossRs, @reason, @loggedBy, @branchZone, @notes, @loggedAt
+      )
+    `
+      )
+      .run(prepared);
+
+    this.logActivity(
+      'expired',
+      prepared.itemName,
+      `Logged ${prepared.quantityWasted} ${prepared.unit} waste (${prepared.reason}, ₹${prepared.lossRs})`
+    );
+
+    return { log: mapWasteLog(prepared), updatedItem };
+  },
+
+  deleteWasteLog(id: string) {
+    sqliteDb.prepare('DELETE FROM waste_logs WHERE id = ?').run(id);
+    return true;
+  },
+
+  // ---------------- Purchase Invoices & GRN Spend Ledger ----------------
+  getInvoices(limit = 100) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 300);
+    const rows = sqliteDb
+      .prepare('SELECT * FROM invoices ORDER BY invoiceDate DESC, createdAt DESC LIMIT ?')
+      .all(safeLimit) as any[];
+    return rows.map(mapInvoice);
+  },
+
+  saveInvoice(entry: any) {
+    const nowIso = new Date().toISOString();
+    const todayStr = nowIso.split('T')[0];
+    const amountRs = Math.max(0, Number(entry.amountRs) || 0);
+    const prepared = {
+      id: entry.id || `inv-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      invoiceNumber: String(entry.invoiceNumber || `GRN-${Date.now().toString().slice(-5)}`).trim(),
+      supplierName: String(entry.supplierName || 'Local Market / Kirana').trim(),
+      invoiceDate: entry.invoiceDate || todayStr,
+      dueDate: entry.dueDate ?? null,
+      amountRs,
+      category: entry.category || 'Mixed Groceries',
+      paymentStatus:
+        entry.paymentStatus === 'pending' || entry.paymentStatus === 'overdue' ? entry.paymentStatus : 'paid',
+      itemsCount:
+        entry.itemsCount !== null && entry.itemsCount !== undefined && !isNaN(Number(entry.itemsCount))
+          ? Number(entry.itemsCount)
+          : null,
+      branchZone: entry.branchZone ?? null,
+      notes: entry.notes ?? null,
+      createdAt: entry.createdAt || nowIso,
+      updatedAt: nowIso,
+    };
+
+    sqliteDb
+      .prepare(
+        `
+      INSERT OR REPLACE INTO invoices (
+        id, invoiceNumber, supplierName, invoiceDate, dueDate, amountRs, category, paymentStatus, itemsCount, branchZone, notes, createdAt, updatedAt
+      ) VALUES (
+        @id, @invoiceNumber, @supplierName, @invoiceDate, @dueDate, @amountRs, @category, @paymentStatus, @itemsCount, @branchZone, @notes, @createdAt, @updatedAt
+      )
+    `
+      )
+      .run(prepared);
+
+    this.logActivity(
+      'restocked',
+      prepared.supplierName,
+      `Invoice ${prepared.invoiceNumber} — ₹${amountRs.toLocaleString('en-IN')} (${prepared.paymentStatus.toUpperCase()})`
+    );
+    return mapInvoice(prepared);
+  },
+
+  updateInvoiceStatus(id: string, paymentStatus: 'paid' | 'pending' | 'overdue') {
+    const row = sqliteDb.prepare('SELECT * FROM invoices WHERE id = ?').get(id) as any;
+    if (!row) return null;
+    const nowIso = new Date().toISOString();
+    sqliteDb
+      .prepare('UPDATE invoices SET paymentStatus = ?, updatedAt = ? WHERE id = ?')
+      .run(paymentStatus, nowIso, id);
+    return mapInvoice({ ...row, paymentStatus, updatedAt: nowIso });
+  },
+
+  deleteInvoice(id: string) {
+    sqliteDb.prepare('DELETE FROM invoices WHERE id = ?').run(id);
+    return true;
+  },
+
   // ---------------- Full JSON Backup & Restore ----------------
   exportBackupJson() {
     return {
-      version: 3,
+      version: 4,
       exportedAt: new Date().toISOString(),
       preferences: this.getPreferences(),
       items: this.getAllItems(),
@@ -1671,6 +1860,8 @@ export const db = {
       suppliers: this.getSuppliers(),
       storageLogs: this.getStorageLogs(150),
       checklists: this.getChecklists(),
+      wasteLogs: this.getWasteLogs(200),
+      invoices: this.getInvoices(200),
       activityLogs: this.getActivityLogs(100),
     };
   },
@@ -1720,6 +1911,18 @@ export const db = {
       sqliteDb.exec('DELETE FROM checklists;');
       for (const c of snapshot.checklists) {
         this.saveChecklistItem(c);
+      }
+    }
+    if (Array.isArray(snapshot.wasteLogs)) {
+      sqliteDb.exec('DELETE FROM waste_logs;');
+      for (const w of snapshot.wasteLogs) {
+        this.logWaste({ ...w, itemId: null });
+      }
+    }
+    if (Array.isArray(snapshot.invoices)) {
+      sqliteDb.exec('DELETE FROM invoices;');
+      for (const inv of snapshot.invoices) {
+        this.saveInvoice(inv);
       }
     }
     this.logActivity('restocked', 'Full Database Restore', `Restored backup (${Array.isArray(snapshot.items) ? snapshot.items.length : 0} items)`);
@@ -1918,3 +2121,39 @@ function mapChecklistItem(row: any) {
     updatedAt: row.updatedAt || undefined,
   };
 }
+
+function mapWasteLog(row: any) {
+  return {
+    id: row.id,
+    itemId: row.itemId || undefined,
+    itemName: row.itemName,
+    category: row.category || 'Other',
+    quantityWasted: Number(row.quantityWasted) || 0,
+    unit: row.unit || 'unit',
+    lossRs: Number(row.lossRs) || 0,
+    reason: row.reason || 'expired',
+    loggedBy: row.loggedBy || undefined,
+    branchZone: row.branchZone || undefined,
+    notes: row.notes || undefined,
+    loggedAt: row.loggedAt,
+  };
+}
+
+function mapInvoice(row: any) {
+  return {
+    id: row.id,
+    invoiceNumber: row.invoiceNumber,
+    supplierName: row.supplierName,
+    invoiceDate: row.invoiceDate,
+    dueDate: row.dueDate || undefined,
+    amountRs: Number(row.amountRs) || 0,
+    category: row.category || 'Mixed Groceries',
+    paymentStatus: row.paymentStatus || 'paid',
+    itemsCount: row.itemsCount !== null && row.itemsCount !== undefined ? Number(row.itemsCount) : null,
+    branchZone: row.branchZone || undefined,
+    notes: row.notes || undefined,
+    createdAt: row.createdAt || undefined,
+    updatedAt: row.updatedAt || undefined,
+  };
+}
+

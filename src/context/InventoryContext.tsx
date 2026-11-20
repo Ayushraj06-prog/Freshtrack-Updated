@@ -23,6 +23,10 @@ import {
   TransferItemPayload,
   StocktakeEntryPayload,
   StocktakeResult,
+  WasteLogEntry,
+  LogWastePayload,
+  PurchaseInvoice,
+  InvoiceStatus,
 } from '../types/inventory';
 
 interface InventoryContextType {
@@ -33,6 +37,8 @@ interface InventoryContextType {
   suppliers: Supplier[];
   storageLogs: StorageLog[];
   checklists: ChecklistItem[];
+  wasteLogs: WasteLogEntry[];
+  invoices: PurchaseInvoice[];
   activityLogs: ActivityLogEntry[];
   preferences: UserPreferences;
   dbInfo: DbInfo | null;
@@ -73,6 +79,11 @@ interface InventoryContextType {
   toggleChecklistItem: (id: string) => Promise<void>;
   deleteChecklistItem: (id: string) => Promise<void>;
   resetDailyChecklists: () => Promise<void>;
+  logWaste: (payload: LogWastePayload) => Promise<WasteLogEntry>;
+  deleteWasteLog: (id: string) => Promise<void>;
+  saveInvoice: (entry: Partial<PurchaseInvoice>) => Promise<PurchaseInvoice>;
+  updateInvoiceStatus: (id: string, paymentStatus: InvoiceStatus) => Promise<void>;
+  deleteInvoice: (id: string) => Promise<void>;
   refreshActivityLogs: () => Promise<void>;
   exportBackupJson: () => Promise<void>;
   restoreBackupJson: (snapshot: any) => Promise<void>;
@@ -107,6 +118,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [storageLogs, setStorageLogs] = useState<StorageLog[]>([]);
   const [checklists, setChecklists] = useState<ChecklistItem[]>([]);
+  const [wasteLogs, setWasteLogs] = useState<WasteLogEntry[]>([]);
+  const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
   const [preferences, setPreferences] = useState<UserPreferences>(DEFAULT_PREFS);
   const [dbInfo, setDbInfo] = useState<DbInfo | null>(null);
@@ -135,6 +148,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         backendSuppliers,
         backendStorageLogs,
         backendChecklists,
+        backendWasteLogs,
+        backendInvoices,
         backendLogs,
       ] = await Promise.all([
         api.fetchItems(),
@@ -146,6 +161,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         api.fetchSuppliers().catch(() => []),
         api.fetchStorageLogs(60).catch(() => []),
         api.fetchChecklists().catch(() => []),
+        api.fetchWasteLogs(100).catch(() => []),
+        api.fetchInvoices(100).catch(() => []),
         api.fetchActivityLogs(40).catch(() => []),
       ]);
       setItems(backendItems);
@@ -157,6 +174,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setSuppliers(backendSuppliers || []);
       setStorageLogs(backendStorageLogs || []);
       setChecklists(backendChecklists || []);
+      setWasteLogs(backendWasteLogs || []);
+      setInvoices(backendInvoices || []);
       setActivityLogs(backendLogs || []);
       setDbConnected(true);
     } catch (err) {
@@ -634,6 +653,56 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     refreshActivityLogs();
   };
 
+  const logWaste = async (payload: LogWastePayload): Promise<WasteLogEntry> => {
+    const res = await api.logWaste(payload);
+    setWasteLogs((prev) => [res.log, ...prev]);
+    if (res.updatedItem) {
+      setItems((prev) => prev.map((i) => (i.id === res.updatedItem!.id ? res.updatedItem! : i)));
+    }
+    api.getDbInfo().then(setDbInfo).catch(() => {});
+    refreshActivityLogs();
+    return res.log;
+  };
+
+  const deleteWasteLog = async (id: string) => {
+    setWasteLogs((prev) => prev.filter((w) => w.id !== id));
+    try {
+      await api.deleteWasteLog(id);
+    } catch (err) {
+      console.error('Failed to delete waste log:', err);
+    }
+  };
+
+  const saveInvoice = async (entry: Partial<PurchaseInvoice>): Promise<PurchaseInvoice> => {
+    const saved = await api.saveInvoice(entry);
+    setInvoices((prev) => {
+      const idx = prev.findIndex((inv) => inv.id === saved.id);
+      if (idx !== -1) return prev.map((inv) => (inv.id === saved.id ? saved : inv));
+      return [saved, ...prev];
+    });
+    refreshActivityLogs();
+    return saved;
+  };
+
+  const updateInvoiceStatus = async (id: string, paymentStatus: InvoiceStatus) => {
+    setInvoices((prev) => prev.map((inv) => (inv.id === id ? { ...inv, paymentStatus } : inv)));
+    try {
+      const updated = await api.updateInvoiceStatus(id, paymentStatus);
+      setInvoices((prev) => prev.map((inv) => (inv.id === id ? updated : inv)));
+    } catch (err) {
+      console.error('Failed to update invoice status:', err);
+    }
+  };
+
+  const deleteInvoice = async (id: string) => {
+    setInvoices((prev) => prev.filter((inv) => inv.id !== id));
+    try {
+      await api.deleteInvoice(id);
+    } catch (err) {
+      console.error('Failed to delete invoice:', err);
+    }
+  };
+
   const exportBackupJson = async () => {
     const snapshot = await api.exportBackup();
     const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
@@ -837,6 +906,8 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         suppliers,
         storageLogs,
         checklists,
+        wasteLogs,
+        invoices,
         activityLogs,
         preferences,
         dbInfo,
@@ -874,6 +945,11 @@ export const InventoryProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         toggleChecklistItem,
         deleteChecklistItem,
         resetDailyChecklists,
+        logWaste,
+        deleteWasteLog,
+        saveInvoice,
+        updateInvoiceStatus,
+        deleteInvoice,
         refreshActivityLogs,
         exportBackupJson,
         restoreBackupJson,

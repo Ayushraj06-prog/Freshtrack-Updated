@@ -581,3 +581,75 @@ apiRouter.delete('/checklists/:id', (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// 17. Root-Cause Waste Logs
+apiRouter.get('/waste-logs', (req, res) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : 100;
+    const logs = db.getWasteLogs(limit);
+    res.json({ success: true, count: logs.length, logs });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/waste-logs', (req, res) => {
+  try {
+    const result = db.logWaste(req.body || {});
+    res.status(201).json({ success: true, ...result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/waste-logs/:id', (req, res) => {
+  try {
+    db.deleteWasteLog(req.params.id);
+    res.json({ success: true, deletedId: req.params.id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 18. Purchase Invoices & GRN Spend Ledger
+apiRouter.get('/invoices', (req, res) => {
+  try {
+    const limit = req.query.limit ? Number(req.query.limit) : 100;
+    const invoices = db.getInvoices(limit);
+    res.json({ success: true, count: invoices.length, invoices });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/invoices', (req, res) => {
+  try {
+    const invoice = db.saveInvoice(req.body || {});
+    res.status(201).json({ success: true, invoice });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/invoices/:id/status', (req, res) => {
+  try {
+    const status = req.body?.paymentStatus;
+    if (!['paid', 'pending', 'overdue'].includes(status)) {
+      return res.status(400).json({ success: false, error: 'Invalid paymentStatus' });
+    }
+    const invoice = db.updateInvoiceStatus(req.params.id, status);
+    if (!invoice) return res.status(404).json({ success: false, error: 'Invoice not found' });
+    res.json({ success: true, invoice });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.delete('/invoices/:id', (req, res) => {
+  try {
+    db.deleteInvoice(req.params.id);
+    res.json({ success: true, deletedId: req.params.id });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
