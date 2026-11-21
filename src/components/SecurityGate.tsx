@@ -7,8 +7,9 @@
  */
 
 import React, { useState } from 'react';
-import { ShieldCheck, Lock, Eye, EyeOff, KeyRound, Leaf, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, Lock, Eye, EyeOff, KeyRound, Leaf, AlertCircle, CheckCircle2, Smartphone } from 'lucide-react';
 import { api } from '../services/api';
+import { InstallAppModal, usePWAInstall } from './PWAInstallButton';
 
 interface SecurityGateProps {
   mode: 'loading' | 'setup' | 'locked';
@@ -22,6 +23,8 @@ export const SecurityGate: React.FC<SecurityGateProps> = ({ mode, source, onAuth
   const [showPasscode, setShowPasscode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const { isInstallable, isInstalled, install } = usePWAInstall();
 
   const isSetup = mode === 'setup';
   const meetsLength = passcode.trim().length >= 8;
@@ -198,17 +201,39 @@ export const SecurityGate: React.FC<SecurityGateProps> = ({ mode, source, onAuth
         </form>
 
         {/* Security Assurance Footer */}
-        <div className="pt-4 border-t border-[#E2E8DE] grid grid-cols-2 gap-2 text-[11px] text-stone-500">
-          <div className="bg-[#F7F8F4] rounded-xl px-3 py-2 border border-[#E2E8DE]/70">
-            <span className="font-bold text-stone-700 block">Salted scrypt + HMAC</span>
-            <span>Signed 24h session tokens</span>
+        <div className="pt-4 border-t border-[#E2E8DE] space-y-3">
+          <div className="grid grid-cols-2 gap-2 text-[11px] text-stone-500">
+            <div className="bg-[#F7F8F4] rounded-xl px-3 py-2 border border-[#E2E8DE]/70">
+              <span className="font-bold text-stone-700 block">Salted scrypt + HMAC</span>
+              <span>Signed 24h session tokens</span>
+            </div>
+            <div className="bg-[#F7F8F4] rounded-xl px-3 py-2 border border-[#E2E8DE]/70">
+              <span className="font-bold text-stone-700 block">Brute-Force Protected</span>
+              <span>Rate-limited &amp; CSRF guarded</span>
+            </div>
           </div>
-          <div className="bg-[#F7F8F4] rounded-xl px-3 py-2 border border-[#E2E8DE]/70">
-            <span className="font-bold text-stone-700 block">Brute-Force Protected</span>
-            <span>Rate-limited &amp; CSRF guarded</span>
-          </div>
+
+          {!isInstalled && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (isInstallable) {
+                  const ok = await install();
+                  if (!ok) setShowInstallModal(true);
+                } else {
+                  setShowInstallModal(true);
+                }
+              }}
+              className="w-full py-2.5 px-3 rounded-2xl bg-[#EAF3E6] hover:bg-[#d8ebd1] text-[#2C5F2D] border border-[#6B9B4F]/40 text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer transition-colors"
+            >
+              <Smartphone className="w-4 h-4" />
+              <span>Install FreshTrack as Mobile App</span>
+            </button>
+          )}
         </div>
       </div>
+
+      <InstallAppModal isOpen={showInstallModal} onClose={() => setShowInstallModal(false)} />
     </div>
   );
 };

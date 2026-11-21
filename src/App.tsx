@@ -30,7 +30,7 @@ import { CommandPaletteModal } from './components/CommandPaletteModal';
 import { FifoLabelPrinterModal } from './components/FifoLabelPrinterModal';
 import { StocktakeModal } from './components/StocktakeModal';
 import { SecurityGate } from './components/SecurityGate';
-import { OfflineIndicator } from './components/PWAInstallButton';
+import { MobileInstallBanner, OfflineIndicator } from './components/PWAInstallButton';
 import { OperationScale } from './types/inventory';
 
 function MainApp() {
@@ -46,6 +46,18 @@ function MainApp() {
   const [labelPrinterInitialIds, setLabelPrinterInitialIds] = useState<string[] | undefined>(undefined);
 
   useEffect(() => {
+    // Support PWA home-screen shortcuts (/?action=add or /?tab=recipes)
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam && ['dashboard', 'inventory', 'recipes', 'operations', 'settings'].includes(tabParam)) {
+        setActiveTab(tabParam as any);
+      }
+      if (params.get('action') === 'add') {
+        setIsAddModalOpen(true);
+      }
+    } catch {}
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
@@ -188,6 +200,9 @@ function MainApp() {
 
       {/* Main Content Area */}
       <main className="max-w-6xl mx-auto px-4 w-full pt-4 flex-1 space-y-4">
+        {/* Mobile App Install Banner (auto-hidden when running in standalone app mode) */}
+        <MobileInstallBanner />
+
         {/* Operation Scale Selection Section (shown until user confirms or configures their mode) */}
         {dbConnected && !preferences.scaleConfigured && (
           <section className="bg-white border border-[#6B9B4F]/50 rounded-3xl p-4 sm:p-5 shadow-sm">

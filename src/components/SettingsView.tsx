@@ -32,6 +32,7 @@ import { api } from '../services/api';
 import { aiService, AiStatus } from '../services/aiService';
 import { OperationScale } from '../types/inventory';
 import { runReceiptParserTests } from '../utils/receiptParser';
+import { InstallAppSettingsCard } from './PWAInstallButton';
 
 interface SettingsViewProps {
   onOpenScaleModal?: () => void;
@@ -146,6 +147,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onOpenScaleModal }) 
           Configure Household, Restaurant, or Enterprise mode, SQLite backend diagnostics, project download, and receipt test suite.
         </p>
       </div>
+
+      {/* 0. INSTALL MOBILE & DESKTOP APP (PWA) */}
+      <InstallAppSettingsCard />
 
       {/* 0. OPERATION SCALE & TIER PARAMETERS SECTION */}
       <div className="bg-white rounded-3xl p-5 border border-[#6B9B4F]/40 shadow-xs space-y-4">

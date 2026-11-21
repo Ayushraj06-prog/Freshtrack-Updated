@@ -35,6 +35,8 @@ export function securityHeadersMiddleware(req: Request, res: Response, next: Nex
     "img-src 'self' data: blob: https:",
     "media-src 'self' blob:",
     "connect-src 'self' ws: wss: https:",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
