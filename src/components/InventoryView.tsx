@@ -221,49 +221,53 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 shrink-0">
           <button
+            type="button"
             onClick={() => setSelectedStatus(selectedStatus === 'restock' ? 'active' : 'restock')}
-            className={`px-3.5 py-2.5 border text-xs font-bold rounded-2xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+            className={`px-3 py-2.5 border text-xs font-bold rounded-2xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[42px] ${
               selectedStatus === 'restock'
                 ? 'bg-stone-900 text-[#A3E635] border-stone-900'
                 : 'bg-amber-50 hover:bg-amber-100 text-amber-950 border-amber-300'
             }`}
           >
-            <ShoppingCart className="w-4 h-4" />
-            <span>Need to Buy &amp; Restock</span>
+            <ShoppingCart className="w-4 h-4 shrink-0" />
+            <span className="truncate">Buy &amp; Restock</span>
             {pendingBuyCount > 0 && (
-              <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-black">
+              <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-black shrink-0">
                 {pendingBuyCount}
               </span>
             )}
           </button>
 
           <button
+            type="button"
             onClick={() => setIsLeftoverModalOpen(true)}
-            className="px-3.5 py-2.5 bg-white hover:bg-stone-50 text-stone-800 border border-[#E2E8DE] text-xs font-bold rounded-2xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+            className="px-3 py-2.5 bg-white hover:bg-stone-50 text-stone-800 border border-[#E2E8DE] text-xs font-bold rounded-2xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[42px]"
           >
-            <Clock className="w-4 h-4 text-[#2C5F2D]" />
-            <span>{isCommercial ? 'Prep Batch Timer' : 'Log Leftover'}</span>
+            <Clock className="w-4 h-4 text-[#2C5F2D] shrink-0" />
+            <span className="truncate">{isCommercial ? 'Prep Timer' : 'Log Leftover'}</span>
           </button>
 
           <button
+            type="button"
             onClick={() => {
               setCustomRecipeItemId(null);
               setIsCustomRecipeOpen(true);
             }}
-            className="px-3.5 py-2.5 bg-[#EAF3E6] hover:bg-[#d8edd1] text-[#2C5F2D] border border-[#6B9B4F]/40 text-xs font-bold rounded-2xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            className="px-3 py-2.5 bg-[#EAF3E6] hover:bg-[#d8edd1] text-[#2C5F2D] border border-[#6B9B4F]/40 text-xs font-bold rounded-2xl shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[42px]"
           >
-            <UtensilsCrossed className="w-4 h-4 text-[#2C5F2D]" />
-            <span>Cook My Own Recipe</span>
+            <UtensilsCrossed className="w-4 h-4 text-[#2C5F2D] shrink-0" />
+            <span className="truncate">Cook My Recipe</span>
           </button>
 
           <button
+            type="button"
             onClick={onOpenAddModal}
-            className="px-4 py-2.5 bg-[#2C5F2D] hover:bg-[#204721] text-white text-xs font-bold rounded-2xl shadow-md shadow-[#2C5F2D]/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            className="px-3 py-2.5 bg-[#2C5F2D] hover:bg-[#204721] text-white text-xs font-bold rounded-2xl shadow-md shadow-[#2C5F2D]/20 active:scale-95 transition-all flex items-center justify-center gap-1.5 cursor-pointer min-h-[42px]"
           >
-            <PlusCircle className="w-4 h-4" />
-            <span>{isCommercial ? 'Add Stock / Batch' : 'Add Kitchen Items'}</span>
+            <PlusCircle className="w-4 h-4 shrink-0" />
+            <span className="truncate">{isCommercial ? 'Add Stock' : 'Add Items'}</span>
           </button>
         </div>
       </div>
@@ -331,7 +335,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
             {isEnterprise && (
               <span className="px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 font-bold text-[11px] tabular-nums">
                 At Risk (≤48h): ₹{(stats.valueAtRiskRs ?? 0).toLocaleString('en-IN')}
@@ -379,7 +383,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
       )}
 
       {/* Storage & Status Filter Pills */}
-      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 text-xs max-w-full">
         {selectedStatus !== 'restock' && (
           <>
             {[

@@ -455,7 +455,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </span>
           </div>
 
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
             <div className="p-3 rounded-2xl bg-[#F7F8F4] border border-[#E2E8DE]">
               <span className="text-[10px] font-semibold text-stone-500 block">CO₂e Prevented</span>
               <span className="text-lg font-black text-[#2C5F2D] mt-0.5 block tabular-nums">

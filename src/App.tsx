@@ -102,7 +102,7 @@ function MainApp() {
   }
 
   return (
-    <div className="min-h-screen bg-[#F4F6F0] text-stone-900 font-sans flex flex-col selection:bg-[#2C5F2D] selection:text-white">
+    <div className="min-h-dvh w-full max-w-full overflow-x-clip bg-[#F4F6F0] text-stone-900 font-sans flex flex-col selection:bg-[#2C5F2D] selection:text-white">
       {/* Top Header */}
       <Header
         activeTab={activeTab}
@@ -199,7 +199,7 @@ function MainApp() {
       </div>
 
       {/* Main Content Area */}
-      <main className="max-w-6xl mx-auto px-4 w-full pt-4 flex-1 space-y-4">
+      <main className="max-w-6xl mx-auto px-3 sm:px-4 w-full pt-3 sm:pt-4 pb-safe-main md:pb-10 flex-1 space-y-4 min-w-0">
         {/* Mobile App Install Banner (auto-hidden when running in standalone app mode) */}
         <MobileInstallBanner />
 
@@ -309,54 +309,43 @@ function MainApp() {
 
       {/* Mobile Floating Add Button */}
       <button
+        type="button"
         onClick={() => setIsAddModalOpen(true)}
-        className="md:hidden fixed bottom-20 right-4 z-40 w-14 h-14 rounded-2xl bg-[#2C5F2D] text-white shadow-xl shadow-[#2C5F2D]/40 flex items-center justify-center active:scale-95 transition-transform"
+        className="md:hidden fixed fab-safe-bottom right-3.5 z-40 w-14 h-14 rounded-2xl bg-[#2C5F2D] text-white shadow-xl shadow-[#2C5F2D]/35 flex items-center justify-center active:scale-95 transition-transform cursor-pointer"
         aria-label="Add Item"
       >
         <Plus className="w-6 h-6" />
       </button>
 
       {/* Mobile Bottom Navigation Bar */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-[#E2E8DE] z-30 px-3 py-2 flex items-center justify-around text-[10px] font-bold text-stone-500">
-        <button
-          onClick={() => setActiveTab('inventory')}
-          className={`flex flex-col items-center gap-1 ${activeTab === 'inventory' ? 'text-[#2C5F2D]' : ''}`}
-        >
-          <Refrigerator className="w-5 h-5" />
-          <span>Inventory</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('dashboard')}
-          className={`flex flex-col items-center gap-1 ${activeTab === 'dashboard' ? 'text-[#2C5F2D]' : ''}`}
-        >
-          <LayoutDashboard className="w-5 h-5" />
-          <span>Analytics</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('recipes')}
-          className={`flex flex-col items-center gap-1 ${activeTab === 'recipes' ? 'text-[#2C5F2D]' : ''}`}
-        >
-          <UtensilsCrossed className="w-5 h-5" />
-          <span>Recipes</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('operations')}
-          className={`flex flex-col items-center gap-1 ${activeTab === 'operations' ? 'text-[#2C5F2D]' : ''}`}
-        >
-          <Truck className="w-5 h-5" />
-          <span>Ops</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`flex flex-col items-center gap-1 ${activeTab === 'settings' ? 'text-[#2C5F2D]' : ''}`}
-        >
-          <Settings className="w-5 h-5" />
-          <span>Settings</span>
-        </button>
+      <nav
+        aria-label="Mobile Navigation"
+        className="md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-[#E2E8DE] z-30 px-1.5 pt-1.5 pb-safe-nav grid grid-cols-5 items-center text-[10px] font-bold text-stone-500 shadow-[0_-2px_10px_rgba(0,0,0,0.04)]"
+      >
+        {(
+          [
+            { id: 'inventory', label: 'Inventory', icon: <Refrigerator className="w-5 h-5" /> },
+            { id: 'dashboard', label: 'Analytics', icon: <LayoutDashboard className="w-5 h-5" /> },
+            { id: 'recipes', label: 'Recipes', icon: <UtensilsCrossed className="w-5 h-5" /> },
+            { id: 'operations', label: 'Ops', icon: <Truck className="w-5 h-5" /> },
+            { id: 'settings', label: 'Settings', icon: <Settings className="w-5 h-5" /> },
+          ] as const
+        ).map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex flex-col items-center justify-center gap-0.5 min-h-[44px] rounded-xl transition-colors cursor-pointer ${
+                isActive ? 'text-[#2C5F2D] bg-[#EAF3E6]/70' : 'text-stone-500 active:bg-stone-100'
+              }`}
+            >
+              {tab.icon}
+              <span className="leading-none">{tab.label}</span>
+            </button>
+          );
+        })}
       </nav>
 
       {/* Modals */}

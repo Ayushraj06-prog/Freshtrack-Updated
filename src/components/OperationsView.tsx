@@ -452,7 +452,7 @@ export const OperationsView: React.FC<OperationsViewProps> = ({ onOpenStocktake 
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1 p-1 bg-stone-100 rounded-xl text-xs font-bold shrink-0">
+        <div className="flex items-center gap-1 p-1 bg-stone-100 rounded-xl text-xs font-bold overflow-x-auto no-scrollbar max-w-full shrink-0">
           <button
             type="button"
             onClick={() => setSubTab('suppliers')}

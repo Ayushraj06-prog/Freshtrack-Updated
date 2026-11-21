@@ -67,7 +67,7 @@ export const SecurityGate: React.FC<SecurityGateProps> = ({ mode, source, onAuth
 
   if (mode === 'loading') {
     return (
-      <div className="min-h-screen bg-[#F4F6F0] flex items-center justify-center p-4">
+      <div className="min-h-dvh pt-safe pb-safe bg-[#F4F6F0] flex items-center justify-center p-4">
         <div className="bg-white border border-[#E2E8DE] rounded-3xl p-8 w-full max-w-sm text-center space-y-3">
           <div className="w-12 h-12 rounded-2xl bg-[#2C5F2D] text-white flex items-center justify-center mx-auto">
             <Leaf className="w-6 h-6 text-[#A3E635]" />
@@ -80,7 +80,7 @@ export const SecurityGate: React.FC<SecurityGateProps> = ({ mode, source, onAuth
   }
 
   return (
-    <div className="min-h-screen bg-[#F4F6F0] flex items-center justify-center p-4 selection:bg-[#2C5F2D] selection:text-white">
+    <div className="min-h-dvh pt-safe pb-safe bg-[#F4F6F0] flex items-center justify-center p-4 selection:bg-[#2C5F2D] selection:text-white">
       <div className="w-full max-w-md bg-white border border-[#E2E8DE] rounded-3xl p-6 sm:p-8 shadow-sm space-y-6">
         {/* Brand Header */}
         <div className="flex items-center justify-between gap-3 pb-4 border-b border-[#E2E8DE]">

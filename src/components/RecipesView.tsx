@@ -544,10 +544,10 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
       {/* Recipe Tabs & Controls */}
       <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
         {/* Category Tabs */}
-        <div className="flex items-center gap-1.5 bg-white p-1 rounded-2xl border border-[#E2E8DE] shadow-xs">
+        <div className="flex items-center gap-1.5 bg-white p-1 rounded-2xl border border-[#E2E8DE] shadow-xs overflow-x-auto no-scrollbar max-w-full">
           <button
             onClick={() => setRecipeTab('all')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
               recipeTab === 'all'
                 ? 'bg-[#2C5F2D] text-white shadow-xs'
                 : 'text-stone-600 hover:bg-stone-100'
@@ -558,7 +558,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
 
           <button
             onClick={() => setRecipeTab('expiring')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1 whitespace-nowrap shrink-0 ${
               recipeTab === 'expiring'
                 ? 'bg-[#2C5F2D] text-white shadow-xs'
                 : 'text-stone-600 hover:bg-stone-100'
@@ -572,7 +572,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
 
           <button
             onClick={() => setRecipeTab('custom')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               recipeTab === 'custom'
                 ? 'bg-[#2C5F2D] text-white shadow-xs'
                 : 'text-stone-600 hover:bg-stone-100'
@@ -587,7 +587,7 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
 
           <button
             onClick={() => setRecipeTab('planner')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
               recipeTab === 'planner'
                 ? 'bg-[#2C5F2D] text-white shadow-xs'
                 : 'text-stone-600 hover:bg-stone-100'
@@ -606,15 +606,15 @@ export const RecipesView: React.FC<RecipesViewProps> = ({
         {/* Diet Filters & Search */}
         {recipeTab !== 'planner' && (
           <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
-            <div className="flex items-center gap-1.5 bg-white p-1 rounded-xl border border-[#E2E8DE] text-xs">
-              <span className="text-stone-400 text-[11px] px-2 font-semibold flex items-center gap-1">
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-1 bg-white p-1 rounded-xl border border-[#E2E8DE] text-xs">
+              <span className="text-stone-400 text-[11px] px-1.5 font-semibold hidden sm:flex items-center gap-1">
                 <Filter className="w-3 h-3" /> Diet:
               </span>
               {(['veg', 'egg', 'non-veg'] as const).map((diet) => (
                 <button
                   key={diet}
                   onClick={() => setDietFilter(diet)}
-                  className={`px-3 py-1.5 rounded-lg font-bold capitalize transition-all cursor-pointer ${
+                  className={`flex-1 sm:flex-none px-2.5 sm:px-3 py-1.5 rounded-lg font-bold capitalize transition-all cursor-pointer whitespace-nowrap ${
                     dietFilter === diet
                       ? 'bg-[#2C5F2D] text-white shadow-xs'
                       : 'text-stone-600 hover:bg-stone-100'
